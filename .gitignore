@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.env
+
+# Alembic
+alembic/*.pyc
+alembic/__pycache__/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+
+# IDEs
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+*.DS_Store
