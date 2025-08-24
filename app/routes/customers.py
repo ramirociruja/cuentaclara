@@ -20,7 +20,7 @@ def get_db():
         db.close()
 
 # Creacion de un nuevo customer - USADO
-@router.post("/createCustomers/", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)
 def create_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
     if db.query(Customer).filter(Customer.dni == customer.dni).first():
         raise HTTPException(status_code=400, detail="DNI ya registrado")
@@ -44,7 +44,7 @@ def get_customer(customer_id: int, db: Session = Depends(get_db)):
     return customer
 
 
-@router.put("/edit/{customer_id}", response_model=CustomerOut)
+@router.put("/{customer_id}", response_model=CustomerOut)
 def update_customer(customer_id: int, customer: CustomerCreate, db: Session = Depends(get_db)):
     # Buscar el cliente en la base de datos
     db_customer = db.query(Customer).filter(Customer.id == customer_id).first()
@@ -62,7 +62,7 @@ def update_customer(customer_id: int, customer: CustomerCreate, db: Session = De
 
     return db_customer  # Devolver el cliente actualizado
 
-@router.get("/customers/", response_model=List[CustomerOut])
+@router.get("/", response_model=List[CustomerOut])
 def get_customers(db: Session = Depends(get_db), company_id: Optional[int] = None):
     query = db.query(Customer)
     if company_id:  # Si se pasa company_id, filtramos por él
@@ -71,7 +71,7 @@ def get_customers(db: Session = Depends(get_db), company_id: Optional[int] = Non
 
 
 
-@router.get("/employees/{employee_id}/customers", response_model=List[CustomerOut])
+@router.get("/employees/{employee_id}", response_model=List[CustomerOut])
 def get_customers_by_employee(employee_id: int, db: Session = Depends(get_db)):
     customers = db.query(Customer).filter(Customer.employee_id == employee_id).all()
     if not customers:
