@@ -11,9 +11,9 @@ class Customer(Base):
     name = Column(String, index=True)
     email = Column(String, unique=True, index=True, nullable=True)
     phone = Column(String, unique=True, nullable=True)
-    dni = Column(String, unique=True, index=True)
+    dni = Column(String, unique=True, index=True, nullable=True)
     address = Column(String, nullable=True)
-    province = Column(String, nullable=False)
+    province = Column(String, nullable=True)
     created_at = Column(
     DateTime(timezone=True),
     default=lambda: datetime.now(timezone.utc),

@@ -19,8 +19,8 @@ def get_db():
     finally:
         db.close()
 
-# Creacion de un nuevo customer - USADO
-@router.post("/", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)
+# Creación de un nuevo customer - ruta base
+@router.post("/", response_model=CustomerOut)
 def create_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
     if db.query(Customer).filter(Customer.dni == customer.dni).first():
         raise HTTPException(status_code=400, detail="DNI ya registrado")
