@@ -17,7 +17,7 @@ class InstallmentUpdate(BaseModel):
 class InstallmentOut(BaseModel):
     id: int
     amount: float
-    due_date: datetime
+    due_date: date
     status: str  # Asegúrate de que "status" esté incluido
     is_paid: bool
     loan_id: int
@@ -28,6 +28,9 @@ class InstallmentOut(BaseModel):
     class Config:
         orm_mode = True
 
+class InstallmentListOut(InstallmentOut):
+    customer_name: Optional[str] = None
+    debt_type: Optional[str] = None  # "loan" | "purchase"
 class OverdueInstallmentOut(BaseModel):
     id: int
     due_date: datetime
@@ -54,9 +57,6 @@ class InstallmentDetailedOut(BaseModel):
     class Config:
         orm_mode = True
 
-class InstallmentUpdate(BaseModel):
-    amount: Optional[float]
-    due_date: Optional[datetime]
 
 class InstallmentPaymentRequest(BaseModel):
     amount: float = Field(..., gt=0, description="Monto a pagar")
@@ -68,3 +68,10 @@ class InstallmentPaymentRequest(BaseModel):
         None,
         description="Notas adicionales sobre el pago"
     )
+
+class InstallmentSummaryOut(BaseModel):
+    pending_count: int
+    paid_count: int
+    overdue_count: int
+    total_amount: float
+    pending_amount: float

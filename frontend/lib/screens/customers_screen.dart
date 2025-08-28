@@ -3,7 +3,6 @@ import 'package:frontend/screens/customer_detail_screen.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:frontend/models/customer.dart';
 import 'package:frontend/screens/add_customer_screen.dart';
-import 'package:intl/intl.dart';
 
 class CustomersScreen extends StatefulWidget {
   const CustomersScreen({super.key});
@@ -16,7 +15,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
   static const Color primaryColor = Color(0xFF3366CC);
   static const Color secondaryColor = Color(0xFF00CC66);
   static const Color dangerColor = Color(0xFFFF4444);
-  static const Color warningColor = Color(0xFFFFA000);
 
   String searchQuery = '';
   bool showOnlyDebtors = false;

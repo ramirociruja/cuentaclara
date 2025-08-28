@@ -60,7 +60,6 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
   Future<void> _addCustomer() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-
     setState(() => isLoading = true);
 
     try {
@@ -80,11 +79,11 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
       final customer = Customer(
         id: 0,
-        name: nameController.text,
-        dni: dniController.text,
-        address: addressController.text,
-        phone: phoneController.text,
-        email: emailController.text,
+        name: nameController.text.trim(),
+        dni: dniController.text.trim(),
+        address: addressController.text.trim(),
+        phone: phoneController.text.trim(),
+        email: emailController.text.trim(), // 👈 sigue igual
         province: selectedProvince ?? '',
         companyId: companyId,
         employeeId: employeeId,
@@ -93,15 +92,14 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
       final result = await ApiService.createCustomer(customer);
       if (!mounted) return;
 
-      if (result != null) {
-        Navigator.pop(context, true);
+      if (result.isOk) {
         _showSuccess('Cliente creado exitosamente');
+        Navigator.pop(context, true);
       } else {
-        _showError('No se pudo crear el cliente');
+        _showError(result.error ?? 'No se pudo crear el cliente');
       }
     } catch (e) {
-      _showError('Error al crear cliente: ${e.toString()}');
-      print('Error completo: $e');
+      _showError('Error al crear cliente: $e');
     } finally {
       if (mounted) setState(() => isLoading = false);
     }

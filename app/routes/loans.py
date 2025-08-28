@@ -1,15 +1,60 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import date, datetime, timedelta, timezone
 from app.database.db import get_db
-from app.models.models import Loan, Installment, Customer, Company
+from app.models.models import Loan, Installment, Customer, Company, Payment
 from app.schemas.installments import InstallmentOut
-from app.schemas.loans import LoansOut, LoansCreate, LoansUpdate, LoansOut, RefinanceRequest, LoanPaymentRequest
-from sqlalchemy import or_
+from app.schemas.loans import LoansOut, LoansCreate, LoansSummaryResponse, LoansUpdate, LoansOut, RefinanceRequest, LoanPaymentRequest
+from sqlalchemy import func, or_
 from fastapi import status
 
 router = APIRouter()
+
+# ---------- helpers fecha (mismos que en payments) ----------
+def _parse_iso(dt: str | None) -> datetime | None:
+    if not dt:
+        return None
+    try:
+        return datetime.fromisoformat(dt.replace('Z', ''))
+    except Exception:
+        return None
+
+def _normalize_range(date_from: str | None, date_to: str | None):
+    df = _parse_iso(date_from)
+    dt = _parse_iso(date_to)
+    if df:
+        df = df.replace(hour=0, minute=0, second=0, microsecond=0)
+    if dt:
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return df, dt
+# ------------------------------------------------------------
+
+@router.get("/summary", response_model=LoansSummaryResponse)
+def loans_summary(
+    employee_id: int | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Resume la cantidad y el monto total de Loans con start_date en el rango.
+    Filtra por Customer.employee_id si `employee_id` viene.
+    """
+    df, dt = _normalize_range(date_from, date_to)
+
+    q = db.query(func.count(Loan.id), func.coalesce(func.sum(Loan.amount), 0.0))
+
+    if employee_id is not None:
+        q = q.join(Customer, Loan.customer_id == Customer.id).filter(Customer.employee_id == employee_id)
+    if df is not None:
+        q = q.filter(Loan.start_date >= df)
+    if dt is not None:
+        q = q.filter(Loan.start_date <= dt)
+
+    count, amount = q.one()
+    return LoansSummaryResponse(count=int(count or 0), amount=float(amount or 0.0))
+
 
 # Crear un nuevo préstamo - USADO
 @router.post("/createLoan/", response_model=LoansOut, status_code=status.HTTP_201_CREATED)
@@ -128,6 +173,24 @@ def pay_loan_installments(loan_id: int, payment: LoanPaymentRequest, db: Session
         remaining_amount = installment.register_payment(remaining_amount)
         if before != remaining_amount:
             cuotas_afectadas += 1
+        # Monto efectivamente aplicado a cuotas
+    applied_amount = payment.amount_paid - remaining_amount
+    if applied_amount <= 0:
+        # Por seguridad (igual ya controlás el caso "todas pagadas")
+        raise HTTPException(status_code=400, detail="No se aplicó ningún pago")
+
+    # === Crear registro en payments para el préstamo ===
+    try:
+        payment_row = Payment(
+            amount=float(applied_amount),
+            loan_id=loan.id,
+            purchase_id=None,
+            payment_date=datetime.utcnow(),
+        )
+        db.add(payment_row)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al registrar Payment: {e}")
 
     # Restar del saldo pendiente del préstamo
     loan.total_due -= (payment.amount_paid - remaining_amount)

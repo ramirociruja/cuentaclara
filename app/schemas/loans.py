@@ -49,3 +49,7 @@ class RefinanceRequest(BaseModel):
 
 class LoanPaymentRequest(BaseModel):
     amount_paid: float
+
+class LoansSummaryResponse(BaseModel):
+    count: int
+    amount: float

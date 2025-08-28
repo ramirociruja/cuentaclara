@@ -1,16 +1,18 @@
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, status
-from sqlalchemy import or_
+from sqlalchemy import func, Float, or_, case
 from sqlalchemy.orm import Session
 from app.database.db import get_db
-from app.models.models import Customer, Installment, Loan, Purchase
-from app.schemas.installments import InstallmentDetailedOut, InstallmentOut, InstallmentPaymentRequest, InstallmentUpdate, OverdueInstallmentOut
+from app.models.models import Customer, Installment, Loan, Payment, Purchase
+from app.schemas.installments import InstallmentDetailedOut, InstallmentListOut, InstallmentOut, InstallmentPaymentRequest, InstallmentSummaryOut, InstallmentUpdate, OverdueInstallmentOut
 
 router = APIRouter()
 
 
-## Registrar un pago para una cuota específica - USADO
+EPS = Decimal("0.000001")  # tolerancia para redondeos
+
 @router.post("/{installment_id}/pay", response_model=InstallmentOut)
 def pay_installment(
     installment_id: int,
@@ -18,7 +20,12 @@ def pay_installment(
     db: Session = Depends(get_db)
 ):
     """
-    Registra un pago para una cuota específica
+    Registra un pago para una cuota específica.
+    Reglas:
+      - Actualiza paid_amount, is_paid y status de forma consistente.
+      - Si se cubre el total (con tolerancia), marca 'Pagada' y desactiva overdue.
+      - Si hay pago parcial, 'Parcialmente Pagada'.
+      - Si no hay pagos, 'Pendiente'.
     """
     installment = db.query(Installment).get(installment_id)
     if not installment:
@@ -27,47 +34,145 @@ def pay_installment(
             detail="Cuota no encontrada"
         )
 
-    # Validaciones
-    if installment.is_paid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Esta cuota ya está pagada completamente"
-        )
+    # --- Normalizar a Decimal para evitar problemas de flotantes (si tus montos son NUMERIC) ---
+    def D(x):
+        return Decimal(str(x))
 
-    if payment_data.amount <= 0:
+    amount_to_pay = D(payment_data.amount)
+    if amount_to_pay <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El monto debe ser mayor a cero"
         )
 
-    remaining_amount = installment.amount - installment.paid_amount
-    if payment_data.amount > remaining_amount:
+    installment_amount = D(installment.amount)
+    paid_amount = D(installment.paid_amount or 0)
+
+    # Si ya estaba completamente pagada, bloquear doble pago
+    if (paid_amount + EPS) >= installment_amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta cuota ya está pagada completamente"
+        )
+
+    remaining_amount = (installment_amount - paid_amount).quantize(Decimal("0.000001"))
+    if amount_to_pay - remaining_amount > EPS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"El monto excede el saldo pendiente. Máximo a pagar: {remaining_amount}"
         )
 
     # Registrar el pago
-    installment.paid_amount += payment_data.amount
-    installment.is_paid = installment.paid_amount >= installment.amount
+    new_paid_amount = paid_amount + amount_to_pay
+
+    # Determinar estado con tolerancia
+    if new_paid_amount + EPS >= installment_amount:
+        # Redondeo final para dejarla exacta al total
+        new_paid_amount = installment_amount
+        installment.is_paid = True
+        installment.status = "Pagada"                 # <- Cadena que espera el front
+        installment.is_overdue = False                # Si está paga, no cuenta como vencida
+        # Opcional: fecha de pago si tenés campo
+        # installment.paid_at = datetime.utcnow()
+    elif new_paid_amount > 0:
+        installment.is_paid = False
+        installment.status = "Parcialmente Pagada"    # <- Respetar capitalización
+    else:
+        installment.is_paid = False
+        installment.status = "Pendiente"
+
+    # Persistir cambios en la cuota
+    installment.paid_amount = Decimal(new_paid_amount)
 
     # Actualizar el préstamo asociado
     loan = installment.loan
-    loan.total_due -= payment_data.amount
-
-    if loan.total_due == 0:
+    # Aseguramos no dejar negative drift
+    loan.total_due = D(loan.total_due or 0) - amount_to_pay
+    if loan.total_due < 0:
+        loan.total_due = Decimal("0")
+    # Si quedó saldado, marcarlo como pagado (ajusta el string a tu dominio)
+    if loan.total_due <= EPS:
+        loan.total_due = Decimal("0")
         loan.status = "paid"
+
+    try:
+        payment_row = Payment(
+            amount=float(payment_data.amount),
+            loan_id=installment.loan_id if installment.loan_id else None,
+            purchase_id=installment.purchase_id if installment.purchase_id else None,
+            payment_date=payment_data.payment_date or datetime.utcnow(),
+        )
+        db.add(payment_row)
+    except Exception as e:
+        # Si algo raro pasa al crear el Payment, hacemos rollback coherente
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al registrar Payment: {e}")    
 
     db.commit()
     db.refresh(installment)
-
     return installment
 
 
 # Get a list of all installment
-@router.get("/installment/", response_model=list[InstallmentOut])
-def get_all_installment(db: Session = Depends(get_db)):
-    return db.query(Installment).all()
+@router.get("/", response_model=list[InstallmentListOut])
+def get_all_installment(
+    employee_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    only_pending: Optional[bool] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    # Selecciono la cuota + nombre de cliente + tipo de deuda
+    q = db.query(
+        Installment,
+       case(
+    (Installment.loan_id.is_not(None), "loan"),
+    else_="purchase",
+).label("debt_type"),
+        Customer.name.label("customer_name"),
+    ).outerjoin(Loan, Installment.loan_id == Loan.id
+    ).outerjoin(Purchase, Installment.purchase_id == Purchase.id
+    ).outerjoin(
+        Customer,
+        or_(Customer.id == Loan.customer_id, Customer.id == Purchase.customer_id)
+    )
+
+    # Filtros
+    if employee_id is not None:
+        q = q.filter(Customer.employee_id == employee_id)
+
+    if date_from is not None:
+        q = q.filter(func.date(Installment.due_date) >= date_from)
+    if date_to is not None:
+        q = q.filter(func.date(Installment.due_date) <= date_to)
+
+    if only_pending is True:
+        q = q.filter(Installment.is_paid.is_(False))
+    if status is not None:
+        q = q.filter(Installment.status == status)
+
+    rows = q.order_by(Installment.due_date.asc(), Installment.id.asc()).all()
+
+    # Mapear manualmente al DTO (due_date -> date si tu modelo guarda datetime)
+    out: list[InstallmentListOut] = []
+    for inst, debt_type, customer_name in rows:
+        out.append(InstallmentListOut(
+            id=inst.id,
+            amount=inst.amount,
+            due_date=getattr(inst.due_date, "date", lambda: inst.due_date)(),  # conv a date si es datetime
+            status=inst.status,
+            is_paid=inst.is_paid,
+            loan_id=inst.loan_id,
+            is_overdue=inst.is_overdue,
+            number=inst.number,
+            paid_amount=inst.paid_amount or 0,
+            customer_name=customer_name,
+            debt_type=debt_type,
+        ))
+    return out
+
+
 
 # Get all installment for a specific loan
 @router.get("/installment/loan/{loan_id}", response_model=list[InstallmentOut])
@@ -108,21 +213,6 @@ def delete_installment(installment_id: int, db: Session = Depends(get_db)):
     db.delete(installment)
     db.commit()
     return {"message": "Cuota eliminada correctamente"}
-
-# Mark an installment as paid
-@router.put("/installment/{installment_id}/pay")
-def mark_installment_as_paid(installment_id: int, db: Session = Depends(get_db)):
-    installment = db.query(Installment).get(installment_id)
-    if not installment:
-        raise HTTPException(status_code=404, detail="Cuota no encontrada")
-
-    if installment.is_paid:
-        return {"message": "La cuota ya estaba marcada como pagada"}
-
-    installment.is_paid = True
-    installment.status = "Pagada"
-    db.commit()
-    return {"message": "Cuota marcada como pagada"}
 
 
 # Get detailed list of overdue installment
@@ -329,7 +419,7 @@ def get_installment_history(customer_id: int, db: Session = Depends(get_db)):
     return installment
 
 #Resumen por cliente
-@router.get("/installment/summary/{customer_id}")
+@router.get("/summary/{customer_id}")
 def get_debt_summary(customer_id: int, db: Session = Depends(get_db)):
     customer = db.query(Customer).get(customer_id)
     if not customer:
@@ -393,3 +483,45 @@ def get_overdue_installment_count_by_customer(customer_id: int, db: Session = De
     ).count()
 
     return overdue_installment_count
+
+
+
+@router.get("/summary", response_model=InstallmentSummaryOut)
+def installments_summary(
+    employee_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    base = db.query(Installment)
+
+    if employee_id is not None:
+        base = base.outerjoin(Loan, Installment.loan_id == Loan.id) \
+                   .outerjoin(Purchase, Installment.purchase_id == Purchase.id) \
+                   .outerjoin(Customer, or_(Customer.id == Loan.customer_id,
+                                            Customer.id == Purchase.customer_id)) \
+                   .filter(Customer.employee_id == employee_id)
+
+    if date_from is not None:
+        base = base.filter(func.date(Installment.due_date) >= date_from)
+    if date_to is not None:
+        base = base.filter(func.date(Installment.due_date) <= date_to)
+
+    pending_count = base.filter(Installment.is_paid.is_(False)).count()
+    paid_count    = base.filter(Installment.is_paid.is_(True)).count()
+    overdue_count = base.filter(
+        Installment.is_paid.is_(False),
+        func.date(Installment.due_date) < func.current_date()
+    ).count()
+
+    total_amount = base.with_entities(func.coalesce(func.sum(Installment.amount), 0.0).cast(Float)).scalar() or 0.0
+    pending_amount = base.filter(Installment.is_paid.is_(False)) \
+                         .with_entities(func.coalesce(func.sum(Installment.amount), 0.0).cast(Float)).scalar() or 0.0
+
+    return InstallmentSummaryOut(
+        pending_count=pending_count,
+        paid_count=paid_count,
+        overdue_count=overdue_count,
+        total_amount=float(total_amount),
+        pending_amount=float(pending_amount),
+    )

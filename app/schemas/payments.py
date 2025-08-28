@@ -21,3 +21,6 @@ class PaymentOut(PaymentBase):
 class PaymentDetailedOut(PaymentOut):
     product_name: Optional[str] = None  # if it's a purchase
     loan_amount: Optional[float] = None  # if it's a loan
+
+class PaymentsSummaryResponse(BaseModel):
+    total_amount: float

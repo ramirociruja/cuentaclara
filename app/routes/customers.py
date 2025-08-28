@@ -1,5 +1,8 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from app.database.db import SessionLocal
 from app.models.models import Customer
@@ -19,20 +22,101 @@ def get_db():
     finally:
         db.close()
 
-# Creación de un nuevo customer - ruta base
-@router.post("/", response_model=CustomerOut)
-def create_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
-    if db.query(Customer).filter(Customer.dni == customer.dni).first():
-        raise HTTPException(status_code=400, detail="DNI ya registrado")
+def normalize_phone(phone: str | None) -> str | None:
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", phone)
+    # Opcional: reglas locales AR
+    if digits.startswith("0"):
+        digits = digits[1:]
+    if digits.startswith("54") and len(digits) > 10:
+        digits = digits[2:]
+    return digits
 
+@router.post("/", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)
+def create_customer(customer: CustomerCreate, db: Session = Depends(get_db)):
+    """
+    Crea un cliente nuevo. Si DNI o teléfono ya existen (según la política),
+    devuelve 409 Conflict con un mensaje claro.
+    """
+    # Normalizamos el teléfono para evitar duplicados por formato
+    phone_norm = normalize_phone(customer.phone)
+    # Construimos los datos a insertar
     data = customer.model_dump(exclude_unset=True)
     data.pop("created_at", None)
+    data["phone"] = phone_norm
 
+    # --- Política de unicidad ---
+    # Si tu negocio es multi-empresa, validamos dentro de company_id.
+    # Si NO lo es, quitá el filtro por company_id en los pre-chequeos de abajo.
+    company_filter = (
+        (Customer.company_id == data["company_id"])
+        if "company_id" in data and data["company_id"] is not None
+        else True  # no filtra por empresa
+    )
+
+    # --- Pre-chequeo explícito para mejor mensaje de error ---
+    duplicates = db.query(Customer).filter(
+        company_filter,
+        or_(
+            Customer.dni == data.get("dni"),
+            Customer.phone == phone_norm if phone_norm else False
+        )
+    ).all()
+
+    dup_dni = any(c.dni == data.get("dni") and data.get("dni") is not None for c in duplicates)
+    dup_phone = any(c.phone == phone_norm and phone_norm is not None for c in duplicates)
+
+    if dup_dni and dup_phone:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="DNI y teléfono ya están registrados."
+        )
+    if dup_dni:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="DNI ya registrado."
+        )
+    if dup_phone:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Teléfono ya registrado."
+        )
+
+    # --- Insert ---
     new_customer = Customer(**data)
     db.add(new_customer)
-    db.commit()
-    db.refresh(new_customer)
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        # Fallback por si hay condición de carrera: mapeamos el constraint a un mensaje claro
+        # Intentamos leer el nombre de la constraint (Postgres lo expone en e.orig.diag.constraint_name)
+        constraint = getattr(getattr(e, "orig", None), "diag", None)
+        constraint_name = getattr(constraint, "constraint_name", "") if constraint else ""
 
+        # Ajustá estos nombres a tus constraints reales:
+        #   - customers_dni_key (UNIQUE(dni))
+        #   - customers_phone_key (UNIQUE(phone))
+        #   - customers_company_dni_key (UNIQUE(company_id, dni))
+        #   - customers_company_phone_key (UNIQUE(company_id, phone))
+        if "dni" in constraint_name:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="DNI ya registrado."
+            )
+        if "phone" in constraint_name:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Teléfono ya registrado."
+            )
+        # Si no pudimos identificar, damos un mensaje genérico pero útil
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe un cliente con los mismos datos únicos (DNI o teléfono)."
+        )
+
+    db.refresh(new_customer)
     return new_customer
 
 # Obtener customer - USADO

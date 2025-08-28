@@ -1,14 +1,59 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.database.db import get_db
 from app.models.models import Payment, Loan, Purchase, Customer, Installment
-from sqlalchemy import or_
-from app.schemas.payments import PaymentCreate, PaymentOut, PaymentDetailedOut
+from sqlalchemy import func, or_
+from app.schemas.payments import PaymentCreate, PaymentOut, PaymentDetailedOut, PaymentsSummaryResponse
 from app.utils.status import update_status_if_fully_paid
 
 
 router = APIRouter()
+
+# ---------- helpers fecha ----------
+def _parse_iso(dt: str | None) -> datetime | None:
+    if not dt:
+        return None
+    try:
+        return datetime.fromisoformat(dt.replace('Z', ''))
+    except Exception:
+        return None
+
+def _normalize_range(date_from: str | None, date_to: str | None):
+    df = _parse_iso(date_from)
+    dt = _parse_iso(date_to)
+    if df:
+        df = df.replace(hour=0, minute=0, second=0, microsecond=0)
+    if dt:
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return df, dt
+# -----------------------------------
+
+@router.get("/summary", response_model=PaymentsSummaryResponse)
+def payments_summary(
+    employee_id: int | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    df, dt = _normalize_range(date_from, date_to)
+
+    q = db.query(func.coalesce(func.sum(Payment.amount), 0.0))
+
+    if df is not None:
+        q = q.filter(Payment.payment_date >= df)
+    if dt is not None:
+        q = q.filter(Payment.payment_date <= dt)
+
+    if employee_id is not None:
+        q = (
+            q.join(Loan, Payment.loan_id == Loan.id)
+             .join(Customer, Loan.customer_id == Customer.id)
+             .filter(Customer.employee_id == employee_id)
+        )
+
+    total = q.scalar() or 0.0
+    return PaymentsSummaryResponse(total_amount=float(total))
 
 # Register a new payment
 @router.post("/", response_model=PaymentOut)
@@ -67,8 +112,44 @@ def mark_next_installment_pending(db: Session, loan_id: int = None, purchase_id:
 
 # Get all payments
 @router.get("/", response_model=list[PaymentOut])
-def get_all_payments(db: Session = Depends(get_db)):
-    return db.query(Payment).all()
+def get_all_payments(
+    db: Session = Depends(get_db),
+    employee_id: int | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+):
+    df, dt = _normalize_range(date_from, date_to)
+
+    q = db.query(Payment)
+
+    if df is not None:
+        q = q.filter(Payment.payment_date >= df)
+    if dt is not None:
+        q = q.filter(Payment.payment_date <= dt)
+
+    if employee_id is not None:
+        q = (
+            q.join(Loan, Payment.loan_id == Loan.id)
+             .join(Customer, Loan.customer_id == Customer.id)
+             .filter(Customer.employee_id == employee_id)
+        )
+
+    rows = q.order_by(Payment.payment_date.desc()).all()
+    out: list[PaymentOut] = []
+    for p in rows:
+        ptype = "loan" if p.loan_id else ("purchase" if p.purchase_id else "unknown")
+        out.append(PaymentOut(
+            id=p.id,
+            amount=float(p.amount or 0),
+            payment_date=p.payment_date,
+            loan_id=p.loan_id,
+            purchase_id=p.purchase_id,
+            payment_type=ptype,
+        ))
+    return out
+
+
+# (tus otras rutas siguen igual: by-customer, detailed, etc.)
 
 # Get one payment by ID
 @router.get("/{payment_id}", response_model=PaymentOut)

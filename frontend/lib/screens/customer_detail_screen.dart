@@ -19,7 +19,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   static const Color primaryColor = Color(0xFF3366CC);
   static const Color secondaryColor = Color(0xFF00CC66);
   static const Color dangerColor = Color(0xFFFF4444);
-  static const Color warningColor = Color(0xFFFFA000);
 
   Customer? customer;
   List<Loan> loans = [];

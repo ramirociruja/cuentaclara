@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 //import 'package:frontend/models/purchase.dart';
 import 'package:frontend/models/installment.dart';
-import 'package:frontend/services/api_service.dart';
 
 class PurchaseDetailScreen extends StatefulWidget {
   final int purchaseId;

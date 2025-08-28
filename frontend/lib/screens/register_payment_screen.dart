@@ -58,7 +58,7 @@ class _RegisterPaymentScreenState extends State<RegisterPaymentScreen> {
         loans
             .where(
               (loan) =>
-                  loan.status?.toLowerCase() != "paid" && loan.totalDue > 0,
+                  loan.status.toLowerCase() != "paid" && loan.totalDue > 0,
             )
             .toList();
 
@@ -223,6 +223,7 @@ class _RegisterPaymentScreenState extends State<RegisterPaymentScreen> {
           (loan) => loan.id == loanId,
           orElse:
               () =>
+                  // ignore: cast_from_null_always_fails
                   customerLoans.isNotEmpty ? customerLoans.first : null as Loan,
         );
       });
