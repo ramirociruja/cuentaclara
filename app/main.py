@@ -1,9 +1,18 @@
 from fastapi import FastAPI
 from .routes import customers, employees, loans, installments, purchases, payments
 from app.utils.auth import router as auth_router  # Importamos el router de autenticación
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],      # o una lista de dominios
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Incluir las rutas en la app
 app.include_router(customers.router, prefix="/customers", tags=["Customers"])
 app.include_router(employees.router, prefix="/employees", tags=["Employees"])
