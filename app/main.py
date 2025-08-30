@@ -13,6 +13,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
 # Incluir las rutas en la app
 app.include_router(customers.router, prefix="/customers", tags=["Customers"])
 app.include_router(employees.router, prefix="/employees", tags=["Employees"])
