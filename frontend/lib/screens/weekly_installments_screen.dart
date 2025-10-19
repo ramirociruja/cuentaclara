@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:frontend/screens/installment_detail_screen.dart';
+import 'package:frontend/shared/status.dart';
 
-/// Nueva versión enfocada en:
-/// - Resumen *muy* alto nivel (cuotas de la semana + breakdown por estado)
-/// - Sin selector de rango (siempre semana actual Lun–Dom)
-/// - Filtros como pestañas (TabBar) para una distribución prolija
-/// - UI consistente con el resto (tipografía, colores, cards)
 class WeeklyInstallmentsScreen extends StatefulWidget {
   const WeeklyInstallmentsScreen({super.key});
 
@@ -15,22 +12,53 @@ class WeeklyInstallmentsScreen extends StatefulWidget {
       _WeeklyInstallmentsScreenState();
 }
 
-class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen>
-    with SingleTickerProviderStateMixin {
+class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen> {
   static const Color primaryColor = Color(0xFF3366CC);
 
-  late final TabController _tabController;
-
-  // Filtros visibles
-  // 0: Todas | 1: Pendientes | 2: Parcialmente | 3: Pagadas
-  int _tabIndex = 0;
-
-  late DateTime _monday;
-  late DateTime _sunday;
-
+  // ---- Estado base ----
   int? _employeeId;
   bool _loadingId = true;
   String? _idError;
+
+  // Filtros
+  int _selectedDay = 0; // 0=Todos, 1..7 = Lun..Dom
+  bool _onlyPending = true; // Pendiente/Parcial (excluye vencidas del resumen)
+  String _query = '';
+
+  // Orden
+  String _sort =
+      'cliente_az'; // cliente_az | cliente_za | vencimiento_asc | monto_desc | saldo_desc | estado
+
+  // Semana mostrada (sólo para rótulo)
+  late DateTime _monday;
+  late DateTime _sunday;
+
+  bool _hideByStatus(InstallmentListItem r) {
+    final st = r.installment.status.trim().toLowerCase();
+    return st == 'cancelada' || st == 'refinanciada';
+  }
+
+  bool _isInCurrentWeek(DateTime d) {
+    final dd = DateTime(d.year, d.month, d.day);
+    final lo = DateTime(_monday.year, _monday.month, _monday.day);
+    final hi = DateTime(_sunday.year, _sunday.month, _sunday.day);
+    return !dd.isBefore(lo) && !dd.isAfter(hi);
+  }
+
+  // Datos + scroll (para ocultar resumen al scrollear)
+  Future<List<InstallmentListItem>>? _future;
+  final ScrollController _scrollCtrl = ScrollController();
+  bool _showSummary = true;
+
+  // Buscar en AppBar
+  bool _searchMode = false;
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  // Formato dinero
+  static final NumberFormat _moneyFmt = NumberFormat.currency(
+    locale: 'es_AR',
+    symbol: r'$',
+  );
 
   @override
   void initState() {
@@ -38,21 +66,24 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen>
     final now = DateTime.now();
     _monday = _toMonday(now);
     _sunday = _monday.add(const Duration(days: 6));
-
-    _tabController = TabController(length: 3, vsync: this);
-    _tabController.addListener(() {
-      if (_tabIndex != _tabController.index) {
-        setState(() => _tabIndex = _tabController.index);
-      }
-    });
-
+    _scrollCtrl.addListener(_onScrollHideSummary);
     _loadEmployeeId();
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _scrollCtrl.removeListener(_onScrollHideSummary);
+    _scrollCtrl.dispose();
+    _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _onScrollHideSummary() {
+    if (_scrollCtrl.offset > 24 && _showSummary) {
+      setState(() => _showSummary = false);
+    } else if (_scrollCtrl.offset < 4 && !_showSummary) {
+      setState(() => _showSummary = true);
+    }
   }
 
   Future<void> _loadEmployeeId() async {
@@ -68,6 +99,7 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen>
         setState(() {
           _employeeId = id;
           _loadingId = false;
+          _future = _loadData();
         });
       }
     } catch (e) {
@@ -79,80 +111,245 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen>
     }
   }
 
-  DateTime _toMonday(DateTime d) => d.subtract(Duration(days: d.weekday - 1));
+  Future<List<InstallmentListItem>> _loadData() async {
+    final list = await ApiService.fetchInstallmentsEnriched(
+      employeeId: _employeeId,
+      dateFrom: _monday,
+      dateTo: _sunday,
+      statusFilter: _onlyPending ? 'pendientes' : 'todas',
+    );
 
+    // Nos quedamos SOLO con cuotas cuyo due_date cae en la semana
+    return list.where((r) => _isInCurrentWeek(r.installment.dueDate)).toList();
+  }
+
+  DateTime _toMonday(DateTime d) => d.subtract(Duration(days: d.weekday - 1));
   String _fmtDMY(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
-  Future<_ScreenData> _load() async {
-    final id = _employeeId!;
+  // --------- Helpers de estado / filtros / summary ---------
 
-    // Siempre semana actual por due_date
-    final list = await ApiService.fetchInstallmentsEnriched(
-      employeeId: id,
-      dateFrom: _monday,
-      dateTo: _sunday,
-      statusFilter: '', // traigo todas y filtro client-side por tab
-    );
+  bool _isOverdue(InstallmentListItem row) {
+    final it = row.installment;
+    final s = (it.status).toLowerCase().trim();
+    return (it.isOverdue == true) || s.contains('vencid');
+  }
 
-    // Derivamos el resumen en el cliente para no depender del shape del backend
-    final derived = _deriveSummary(list);
+  String _statusOf(InstallmentListItem row) {
+    final it = row.installment;
+    final s = normalizeInstallmentStatus(
+      it.status,
+    ); // 👈 normalizador unificado
+    if (s.toLowerCase().contains('vencid')) return kCuotaVencida;
+    if (it.paidAmount >= it.amount - 1e-6) return kCuotaPagada;
+    if (it.paidAmount > 0) return kCuotaParcial;
+    return kCuotaPendiente;
+  }
 
-    return _ScreenData(list: list, summary: derived);
+  int _collectionDay(InstallmentListItem row) => (row.collectionDay ?? 0);
+
+  bool _passesDayFilter(InstallmentListItem row) =>
+      _selectedDay == 0 || _collectionDay(row) == _selectedDay;
+
+  bool _passesOnlyPending(InstallmentListItem row) {
+    if (!_onlyPending) return true;
+
+    final st = _statusOf(row);
+
+    // Pendiente o Parcial → SIEMPRE pasan
+    if (st == kCuotaPendiente || st == kCuotaParcial) return true;
+
+    // Vencida → SOLO pasa si su due_date está dentro de ESTA semana
+    if (_isOverdue(row) && _isInCurrentWeek(row.installment.dueDate)) {
+      return true;
+    }
+
+    // Todo lo demás (Pagada, etc.) queda fuera
+    return false;
+  }
+
+  bool _passesQuery(InstallmentListItem row) {
+    if (_query.trim().isEmpty) return true;
+    final q = _query.toLowerCase();
+    final name = (row.customerName ?? '').toLowerCase();
+    final phone = (row.customerPhone ?? '').toLowerCase();
+    return name.contains(q) || phone.contains(q);
+  }
+
+  List<InstallmentListItem> _applyFilters(List<InstallmentListItem> src) {
+    return src
+        .where((r) => !_hideByStatus(r)) // ⬅️ filtra Cancelada / Refinanciada
+        .where((r) => _passesDayFilter(r))
+        .where((r) => _passesOnlyPending(r))
+        .where((r) => _passesQuery(r))
+        .toList();
+  }
+
+  List<InstallmentListItem> _applySort(List<InstallmentListItem> items) {
+    int sOrder(String s) {
+      // usar constantes unificadas
+      if (s == kCuotaPendiente) return 0;
+      if (s == kCuotaParcial) return 1;
+      if (s == kCuotaPagada) return 2;
+      return 3;
+    }
+
+    items.sort((a, b) {
+      final sa = _statusOf(a);
+      final sb = _statusOf(b);
+      final na = (a.customerName ?? '').toLowerCase();
+      final nb = (b.customerName ?? '').toLowerCase();
+      final da = a.installment.dueDate;
+      final db = b.installment.dueDate;
+      final ra = a.installment.amount - a.installment.paidAmount; // saldo
+      final rb = b.installment.amount - b.installment.paidAmount;
+
+      switch (_sort) {
+        case 'cliente_az':
+          return na.compareTo(nb);
+        case 'cliente_za':
+          return nb.compareTo(na);
+        case 'vencimiento_asc':
+          return da.compareTo(db);
+        case 'monto_desc':
+          return b.installment.amount.compareTo(a.installment.amount);
+        case 'saldo_desc':
+          return rb.compareTo(ra);
+        case 'estado':
+          final cmp = sOrder(sa).compareTo(sOrder(sb));
+          if (cmp != 0) return cmp;
+          return da.compareTo(db);
+        default:
+          return da.compareTo(db);
+      }
+    });
+    return items;
   }
 
   Map<String, num> _deriveSummary(List<InstallmentListItem> items) {
-    int total = items.length;
-    int pendientes = 0;
-    int parciales = 0;
-    int pagadas = 0;
-
-    double totalAmount = 0;
-    double paidSoFar = 0;
+    int pendParVen = 0, pagadas = 0;
+    double cobrado = 0, pendiente = 0;
 
     for (final row in items) {
       final it = row.installment;
-      final s = (it.status).toLowerCase().trim();
+      final st = _statusOf(row);
+      final bool esOverdue = _isOverdue(row);
 
-      totalAmount += it.amount;
-      paidSoFar += (it.paidAmount);
-
-      if (it.isPaid == true || s == 'pagada') {
+      if (st == kCuotaPagada) {
         pagadas++;
-      } else if (s == 'parcialmente pagada') {
-        parciales++;
-      } else {
-        pendientes++;
+      } else if (st == kCuotaPendiente || st == kCuotaParcial || esOverdue) {
+        // ✅ Ahora contamos también las Vencidas dentro del bucket Pend/Par/Ven
+        pendParVen++;
       }
+
+      // Dinero
+      cobrado += it.paidAmount;
+      final saldo = it.amount - it.paidAmount;
+      if (saldo > 0) pendiente += saldo;
     }
 
-    return {
-      'total_count': total,
-      'pending_count': pendientes,
-      'partial_count': parciales,
-      'paid_count': pagadas,
-      'total_amount': totalAmount,
-      'paid_amount': paidSoFar,
+    return <String, num>{
+      'count_total': pendParVen + pagadas,
+      'count_pend_par_ven': pendParVen, // 👈 clave nueva
+      'count_pagadas': pagadas,
+      'amount_paid': cobrado,
+      'amount_pending': pendiente,
     };
   }
 
-  List<InstallmentListItem> _applyTabFilter(List<InstallmentListItem> items) {
-    if (_tabIndex == 0) return items; // Todas
-    return items.where((row) {
-      final it = row.installment;
-      final s = (it.status).toLowerCase().trim();
-      final isPaid = (it.isPaid == true) || s == 'pagada';
-      final isPend = s == 'pendiente';
-      final isParc = s == 'parcialmente pagada';
-      switch (_tabIndex) {
-        case 1:
-          return isPend; // Pendientes
-        case 2:
-          return isPaid || isParc; // Pagadas (incluye Parciales)
-        default:
-          return true;
-      }
-    }).toList();
+  String _dayLabel(int? d) {
+    if (d == null || d == 0) return 'Todos';
+    const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    if (d < 1 || d > 7) return '-';
+    return days[d - 1];
+  }
+
+  String _dayFull(int? d) {
+    if (d == null || d == 0) return 'Todos';
+    const days = [
+      'Lunes',
+      'Martes',
+      'Miércoles',
+      'Jueves',
+      'Viernes',
+      'Sábado',
+      'Domingo',
+    ];
+    if (d < 1 || d > 7) return '-';
+    return days[d - 1];
+  }
+
+  // ------------ Sort sheet ------------
+  Future<void> _openSortSheet() async {
+    final sel = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) {
+        Widget tile(String v, String label, IconData icon) {
+          final selected = _sort == v;
+          return ListTile(
+            leading: Icon(
+              icon,
+              color: selected ? primaryColor : Colors.black54,
+            ),
+            title: Text(
+              label,
+              style: TextStyle(
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? primaryColor : null,
+              ),
+            ),
+            trailing:
+                selected ? const Icon(Icons.check, color: primaryColor) : null,
+            onTap: () => Navigator.pop(context, v),
+          );
+        }
+
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              tile('vencimiento_asc', 'Vencimiento ↑', Icons.event),
+              tile('cliente_az', 'Cliente A→Z', Icons.sort_by_alpha),
+              tile('cliente_za', 'Cliente Z→A', Icons.sort_by_alpha),
+              tile(
+                'saldo_desc',
+                'Saldo pendiente ↓',
+                Icons.account_balance_wallet_outlined,
+              ),
+              tile('monto_desc', 'Monto de cuota ↓', Icons.attach_money),
+              tile('estado', 'Estado', Icons.label_outline),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (sel != null) {
+      setState(() => _sort = sel);
+    }
+  }
+
+  // --------- AppBar título o búsqueda ---------
+  Widget _buildAppBarTitle() {
+    if (!_searchMode) {
+      return const Text(
+        'Agenda de cobranzas',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      );
+    }
+    return TextField(
+      controller: _searchCtrl,
+      autofocus: true,
+      style: const TextStyle(color: Colors.white),
+      cursorColor: Colors.white,
+      decoration: const InputDecoration(
+        hintText: 'Buscar nombre o teléfono',
+        hintStyle: TextStyle(color: Colors.white70),
+        border: InputBorder.none,
+      ),
+      onChanged: (v) => setState(() => _query = v),
+    );
   }
 
   @override
@@ -164,289 +361,457 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen>
     }
     if (_idError != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Cuotas de la semana')),
+        appBar: AppBar(title: const Text('Agenda de cobranzas')),
         body: Center(child: Text(_idError!)),
       );
     }
 
-    final subtitle = 'Semana ${_fmtDMY(_monday)} – ${_fmtDMY(_sunday)}';
+    final weekLabel = 'Semana: ${_fmtDMY(_monday)} - ${_fmtDMY(_sunday)}';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Cuotas de la Semana',
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-        ),
         backgroundColor: primaryColor,
         iconTheme: const IconThemeData(color: Colors.white),
+        title: _buildAppBarTitle(),
+        actions: [
+          if (!_searchMode)
+            IconButton(
+              tooltip: 'Buscar',
+              icon: const Icon(Icons.search),
+              onPressed:
+                  () => setState(() {
+                    _searchMode = true;
+                    _showSummary = false;
+                  }),
+            ),
+          if (_searchMode)
+            IconButton(
+              tooltip: 'Cerrar búsqueda',
+              icon: const Icon(Icons.close),
+              onPressed:
+                  () => setState(() {
+                    _searchMode = false;
+                    _query = '';
+                    _searchCtrl.clear();
+                  }),
+            ),
+          IconButton(
+            tooltip: 'Recargar',
+            icon: const Icon(Icons.refresh),
+            onPressed: () => setState(() => _future = _loadData()),
+          ),
+        ],
       ),
-      body: FutureBuilder<_ScreenData>(
-        future: _load(),
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(
-              child: CircularProgressIndicator(color: primaryColor),
-            );
-          }
-          if (snap.hasError) {
-            return Center(child: Text('Error: ${snap.error}'));
-          }
+      body:
+          (_future == null)
+              ? const Center(
+                child: CircularProgressIndicator(color: primaryColor),
+              )
+              : FutureBuilder<List<InstallmentListItem>>(
+                future: _future,
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: primaryColor),
+                    );
+                  }
+                  if (snap.hasError) {
+                    return Center(child: Text('Error: ${snap.error}'));
+                  }
 
-          final data = snap.data!;
-          final items = data.list;
-          final visibleItems = _applyTabFilter(items);
+                  final allWeek = snap.data ?? <InstallmentListItem>[];
 
-          return Column(
-            children: [
-              _SummaryCompact(summary: data.summary, subtitle: subtitle),
+                  var items = allWeek;
+                  items = _applyFilters(items);
+                  items = _applySort(items);
 
-              // TabBar de estados
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: TabBar(
-                    controller: _tabController,
-                    indicator: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 6,
-                          offset: const Offset(0, 3),
+                  final summary = _deriveSummary(items);
+
+                  return Column(
+                    children: [
+                      // Resumen compacto (se oculta al scrollear)
+                      AnimatedCrossFade(
+                        duration: const Duration(milliseconds: 200),
+                        crossFadeState:
+                            _showSummary
+                                ? CrossFadeState.showFirst
+                                : CrossFadeState.showSecond,
+                        firstChild: _TinySummaryBanner(
+                          summary: summary,
+                          dayLabel: _dayLabel(_selectedDay),
+                          weekLabel: weekLabel,
                         ),
-                      ],
-                    ),
-                    labelColor: primaryColor,
-                    unselectedLabelColor: Colors.black54,
-                    tabs: const [
-                      Tab(text: 'Todas'),
-                      Tab(text: 'Pendientes'),
-                      Tab(text: 'Pagadas'),
-                    ],
-                    onTap: (_) => setState(() {}),
-                  ),
-                ),
-              ),
+                        secondChild: const SizedBox.shrink(),
+                      ),
 
-              Expanded(
-                child: RefreshIndicator(
-                  color: primaryColor,
-                  onRefresh: () async => setState(() {}),
-                  child:
-                      visibleItems.isEmpty
-                          ? ListView(
-                            children: const [
-                              SizedBox(height: 80),
-                              Center(child: Text('No hay cuotas esta semana')),
-                            ],
-                          )
-                          : ListView.separated(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            itemCount: visibleItems.length,
-                            separatorBuilder:
-                                (_, __) => const SizedBox(height: 8),
-                            itemBuilder: (context, i) {
-                              final row = visibleItems[i];
-                              final it = row.installment;
+                      // Barra de filtros compacta (con dropdown de día)
+                      _FiltersBar(
+                        selectedDay: _selectedDay,
+                        onlyPending: _onlyPending,
+                        onDayChanged: (d) => setState(() => _selectedDay = d),
+                        onOnlyPendingChanged:
+                            (v) => setState(() {
+                              _onlyPending = v;
+                              _future = _loadData();
+                            }),
+                        onSortPressed: _openSortSheet,
+                        dayLabelBuilder: _dayFull,
+                      ),
 
-                              final isPaid = it.isPaid;
-                              final amount = it.amount;
-                              final number = it.number;
-                              final due = _fmtDMY(it.dueDate);
-                              final status = it.status;
-                              final cust =
-                                  row.customerName ?? 'Cliente desconocido';
-                              final loanId = row.loanId;
-
-                              return Card(
-                                elevation: 1,
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 0,
-                                  vertical: 0,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: BorderSide(color: Colors.grey.shade300),
-                                ),
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(12),
-                                  onTap: () async {
-                                    final refreshed =
-                                        await Navigator.push<bool>(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder:
-                                                (_) => InstallmentDetailScreen(
-                                                  installment: it,
-                                                ),
-                                          ),
-                                        );
-                                    if (refreshed == true && mounted)
-                                      setState(() {});
-                                  },
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12),
-                                    child: Row(
-                                      children: [
-                                        Container(
-                                          width: 46,
-                                          height: 46,
-                                          decoration: BoxDecoration(
-                                            color: primaryColor.withOpacity(
-                                              0.1,
-                                            ),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: const Icon(
-                                            Icons.person,
-                                            color: primaryColor,
-                                            size: 24,
-                                          ),
+                      // Lista
+                      Expanded(
+                        child: RefreshIndicator(
+                          color: primaryColor,
+                          onRefresh:
+                              () async => setState(() => _future = _loadData()),
+                          child:
+                              items.isEmpty
+                                  ? ListView(
+                                    controller: _scrollCtrl,
+                                    children: const [
+                                      SizedBox(height: 80),
+                                      Center(
+                                        child: Text(
+                                          'No hay cuotas para los filtros seleccionados',
                                         ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                cust,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                'Préstamo #${loanId ?? '-'} • Cuota #$number • Vence: $due',
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  color: Colors.grey.shade700,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.end,
-                                          children: [
-                                            Text(
-                                              '\$${amount.toStringAsFixed(2)}',
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 6),
-                                            _StatusPill(
-                                              status: status,
-                                              isPaid: isPaid,
-                                            ),
-                                          ],
-                                        ),
-                                      ],
+                                      ),
+                                    ],
+                                  )
+                                  : ListView.separated(
+                                    controller: _scrollCtrl,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 8,
                                     ),
+                                    itemCount: items.length,
+                                    separatorBuilder:
+                                        (_, __) => const SizedBox(height: 8),
+                                    itemBuilder: (context, i) {
+                                      final row = items[i];
+                                      final it = row.installment;
+                                      final status = _statusOf(row);
+                                      final saldo = (it.amount - it.paidAmount)
+                                          .clamp(0, double.infinity);
+
+                                      // Vencidas por préstamo en la semana (opcional)
+                                      int overdueForLoan = 0;
+                                      if (row.loanId != null) {
+                                        overdueForLoan =
+                                            allWeek
+                                                .where(
+                                                  (r) =>
+                                                      r.loanId == row.loanId &&
+                                                      _isOverdue(r),
+                                                )
+                                                .length;
+                                      }
+
+                                      final cardBorder =
+                                          status.toLowerCase().contains(
+                                                'vencid',
+                                              )
+                                              ? BorderSide(
+                                                color: Colors.redAccent
+                                                    .withValues(alpha: .35),
+                                              )
+                                              : BorderSide(
+                                                color: Colors.grey.shade300,
+                                              );
+
+                                      return Card(
+                                        elevation: 1,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          side: cardBorder,
+                                        ),
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          onTap: () async {
+                                            final refreshed = await Navigator.push<
+                                              bool
+                                            >(
+                                              context,
+                                              MaterialPageRoute(
+                                                builder:
+                                                    (_) =>
+                                                        InstallmentDetailScreen(
+                                                          installment: it,
+                                                        ),
+                                              ),
+                                            );
+                                            if (refreshed == true && mounted) {
+                                              setState(
+                                                () => _future = _loadData(),
+                                              );
+                                            }
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(12),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                // ---- Fila principal ----
+                                                Row(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    // Avatar
+                                                    Container(
+                                                      width: 46,
+                                                      height: 46,
+                                                      decoration: BoxDecoration(
+                                                        color: primaryColor
+                                                            .withValues(
+                                                              alpha: 0.1,
+                                                            ),
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: const Icon(
+                                                        Icons.person,
+                                                        color: primaryColor,
+                                                        size: 24,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 12),
+
+                                                    // Nombre + préstamo
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: [
+                                                          // Nombre
+                                                          Text(
+                                                            row.customerName ??
+                                                                'Cliente',
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style:
+                                                                const TextStyle(
+                                                                  fontSize: 16,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .w700,
+                                                                ),
+                                                          ),
+                                                          const SizedBox(
+                                                            height: 2,
+                                                          ),
+                                                          Text(
+                                                            'Préstamo #${row.loanId ?? '-'}',
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style: TextStyle(
+                                                              fontSize: 13.5,
+                                                              color:
+                                                                  Colors
+                                                                      .grey
+                                                                      .shade700,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w500,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+
+                                                    // Monto de cuota + estado
+                                                    Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .end,
+                                                      children: [
+                                                        Text(
+                                                          'Cuota ${_moneyFmt.format(it.amount)}',
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 15.5,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w800,
+                                                              ),
+                                                        ),
+                                                        const SizedBox(
+                                                          height: 6,
+                                                        ),
+                                                        _StatusPillCompact(
+                                                          status: status,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ],
+                                                ),
+
+                                                // ---- Meta row compacta (SIN fecha de vencimiento) ----
+                                                const SizedBox(height: 8),
+                                                _metaInline([
+                                                  _metaItem(
+                                                    Icons.tag,
+                                                    '#${it.number}',
+                                                  ),
+                                                  if (_selectedDay == 0 &&
+                                                      row.collectionDay != null)
+                                                    _metaItem(
+                                                      Icons.event_available,
+                                                      _dayFull(
+                                                        row.collectionDay,
+                                                      ),
+                                                    ),
+                                                  if (saldo > 0)
+                                                    _metaItem(
+                                                      Icons
+                                                          .account_balance_wallet_outlined,
+                                                      'Saldo ${_moneyFmt.format(saldo)}',
+                                                    ),
+                                                  if (overdueForLoan > 0)
+                                                    _metaItem(
+                                                      Icons.warning_amber,
+                                                      'Vencidas ${overdueForLoan.toString()}',
+                                                    ),
+                                                ]),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
                                   ),
-                                ),
-                              );
-                            },
-                          ),
-                ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
-            ],
-          );
-        },
-      ),
+    );
+  }
+
+  // --------- Meta row helpers ---------
+  Widget _metaInline(List<Widget> items) {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: items,
+    );
+  }
+
+  Widget _metaItem(IconData icon, String text, {Color? color}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color ?? Colors.black45),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 12.5,
+            color: color ?? Colors.black87,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _SummaryCompact extends StatelessWidget {
+// ----------------- Resumen compacto -----------------
+
+class _TinySummaryBanner extends StatelessWidget {
   final Map<String, num> summary;
-  final String subtitle;
-  const _SummaryCompact({required this.summary, required this.subtitle});
+  final String dayLabel;
+  final String weekLabel;
+  const _TinySummaryBanner({
+    required this.summary,
+    required this.dayLabel,
+    required this.weekLabel,
+  });
 
   static const Color primaryColor = Color(0xFF3366CC);
-  static const Color successColor = Color(0xFF00CC66);
-  static const Color warningColor = Color(0xFFFFA000);
-  static const Color infoColor = Color(0xFF607D8B);
+  static const Color okColor = Color(0xFF00CC66);
+  static const Color warnColor = Color(0xFFFFA000);
 
   @override
   Widget build(BuildContext context) {
+    final countTotal = summary['count_total'] ?? 0;
+    final countPendParVen =
+        summary['count_pend_par_ven'] ?? 0; // 👈 nueva clave
+    final countPagadas = summary['count_pagadas'] ?? 0;
+    final amountPaid = (summary['amount_paid'] ?? 0).toDouble();
+    final amountPending = (summary['amount_pending'] ?? 0).toDouble();
+
+    final NumberFormat _fmt = NumberFormat.currency(
+      locale: 'es_AR',
+      symbol: r'$',
+    );
+
     return Card(
-      elevation: 2,
+      elevation: 1.5,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 6),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'Resumen semanal',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: primaryColor,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    subtitle,
-                    style: const TextStyle(color: Colors.black54, fontSize: 12),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              alignment: WrapAlignment.center,
-              runAlignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _chipMetric('Cuotas', summary['total_count'] ?? 0),
-                _chipMetric(
-                  'Pendientes',
-                  summary['pending_count'] ?? 0,
-                  bg: warningColor,
-                ),
-                _chipMetric(
-                  'Parciales',
-                  summary['partial_count'] ?? 0,
-                  bg: infoColor,
-                ),
-                _chipMetric(
-                  'Pagadas',
-                  summary['paid_count'] ?? 0,
-                  bg: successColor,
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
+            // Título sutil + semana + filtro día
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _money('Monto semanal', summary['total_amount'] ?? 0),
-                _money('Cobrado hasta ahora', summary['paid_amount'] ?? 0),
+                const Text(
+                  'Resumen',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: primaryColor,
+                  ),
+                ),
+                Text(
+                  dayLabel == 'Todos' ? 'Día: Todos' : 'Día: $dayLabel',
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              weekLabel,
+              style: const TextStyle(color: Colors.black54, fontSize: 11.5),
+            ),
+            const SizedBox(height: 8),
+
+            // Chips chiquitos: Total / Pend+Par+Ven / Pagadas
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _miniChip('Cuotas', '$countTotal', bg: primaryColor),
+                _miniChip(
+                  'Pend/Par/Ven',
+                  '$countPendParVen',
+                  bg: warnColor,
+                ), // 👈 etiqueta actualizada
+                _miniChip('Pagadas', '$countPagadas', bg: okColor),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Dinero: Cobrado | Pendiente
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _money('Cobrado', _fmt.format(amountPaid)),
+                _money('Pendiente', _fmt.format(amountPending)),
               ],
             ),
           ],
@@ -455,84 +820,175 @@ class _SummaryCompact extends StatelessWidget {
     );
   }
 
-  Widget _chipMetric(String label, num value, {Color bg = primaryColor}) {
+  Widget _miniChip(String label, String value, {required Color bg}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: bg.withOpacity(0.12),
+        color: bg.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: bg.withOpacity(0.35)),
+        border: Border.all(color: bg.withValues(alpha: 0.28)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 5,
+            height: 5,
             margin: const EdgeInsets.only(right: 6),
             decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
           ),
           Text(
-            '$value',
-            style: TextStyle(color: bg.darken(), fontWeight: FontWeight.w600),
+            value,
+            style: TextStyle(
+              color: bg.darken(0.25),
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
           ),
           const SizedBox(width: 6),
-          Text(label, style: TextStyle(color: bg.darken())),
+          Text(
+            label,
+            style: TextStyle(
+              color: bg.darken(0.10),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _money(String label, num value) {
+  Widget _money(String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(color: Colors.black54, fontSize: 12),
+          style: const TextStyle(color: Colors.black54, fontSize: 11.5),
         ),
         const SizedBox(height: 2),
         Text(
-          '\$${value.toStringAsFixed(2)}',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          value,
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
         ),
       ],
     );
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  final String status;
-  final bool isPaid;
-  const _StatusPill({required this.status, required this.isPaid});
+// ----------------- Barra de filtros compacta (con dropdown) -----------------
+
+class _FiltersBar extends StatelessWidget {
+  final int selectedDay; // 0..7
+  final bool onlyPending;
+
+  final ValueChanged<int> onDayChanged;
+  final ValueChanged<bool> onOnlyPendingChanged;
+  final VoidCallback onSortPressed;
+
+  // construir etiqueta completa del día (p.ej., 0->Todos, 1->Lunes)
+  final String Function(int?) dayLabelBuilder;
+
+  static const Color primaryColor = Color(0xFF3366CC);
+
+  const _FiltersBar({
+    required this.selectedDay,
+    required this.onlyPending,
+    required this.onDayChanged,
+    required this.onOnlyPendingChanged,
+    required this.onSortPressed,
+    required this.dayLabelBuilder,
+  });
 
   @override
   Widget build(BuildContext context) {
-    late Color bg;
-    late Color fg;
+    final dayItems = <DropdownMenuItem<int>>[
+      for (int i = 0; i <= 7; i++)
+        DropdownMenuItem<int>(value: i, child: Text(dayLabelBuilder(i))),
+    ];
 
-    final s = status.toLowerCase().trim();
-    if (isPaid || s == 'pagada') {
-      bg = Colors.green.withOpacity(0.12);
-      fg = Colors.green.shade700;
-    } else if (s == 'pendiente') {
-      bg = Colors.orange.withOpacity(0.12);
-      fg = Colors.orange.shade700;
-    } else if (s == 'parcialmente pagada') {
-      bg = Colors.blueGrey.withOpacity(0.12);
-      fg = Colors.blueGrey.shade700;
-    } else {
-      bg = Colors.grey.withOpacity(0.12);
-      fg = Colors.grey.shade700;
-    }
+    return Material(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+        child: Row(
+          children: [
+            // Día (Dropdown)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: selectedDay,
+                  items: dayItems,
+                  onChanged: (v) {
+                    if (v != null) onDayChanged(v);
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
 
+            // Ordenar
+            IconButton(
+              tooltip: 'Ordenar',
+              icon: const Icon(Icons.sort),
+              onPressed: onSortPressed,
+            ),
+
+            const Spacer(),
+
+            // Solo pendientes (texto completo)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Solo pendientes',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 6),
+                Switch.adaptive(
+                  value: onlyPending,
+                  onChanged: onOnlyPendingChanged,
+                  activeColor: primaryColor,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ----------------- Utiles -----------------
+
+class _StatusPillCompact extends StatelessWidget {
+  final String status;
+  const _StatusPillCompact({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = installmentStatusColor(status); // 👈 color unificado
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: bg,
+        color: c.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(status, style: TextStyle(color: fg, fontSize: 12)),
+      child: Text(
+        status,
+        style: TextStyle(
+          color: c.darken(0.25),
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }
@@ -544,10 +1000,4 @@ extension on Color {
     final hslDark = hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
     return hslDark.toColor();
   }
-}
-
-class _ScreenData {
-  final List<InstallmentListItem> list;
-  final Map<String, num> summary;
-  _ScreenData({required this.list, required this.summary});
 }

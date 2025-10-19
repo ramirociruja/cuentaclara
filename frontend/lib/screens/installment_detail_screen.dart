@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:frontend/models/installment.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:intl/intl.dart';
+import 'package:frontend/utils/utils.dart';
+
+// 👇 Estados centralizados
+import 'package:frontend/shared/status.dart';
 
 class InstallmentDetailScreen extends StatefulWidget {
   final Installment installment;
@@ -24,123 +28,171 @@ class _InstallmentDetailScreenState extends State<InstallmentDetailScreen> {
   static const Color dangerColor = Color(0xFFFF4444);
 
   late Installment installment;
-  bool isLoading = false;
   bool isProcessingPayment = false;
-  final TextEditingController _paymentController = TextEditingController();
+
+  final TextEditingController _amountCtrl = TextEditingController();
+  final TextEditingController _otherDescCtrl = TextEditingController();
+
+  // Dropdown “descripción/método” → mapeo a payment_type del backend
+  final List<Map<String, String>> _methods = const [
+    {'label': 'Efectivo', 'value': 'cash'},
+    {'label': 'Transferencia', 'value': 'transfer'},
+    {'label': 'Otro', 'value': 'other'},
+  ];
+  String? _selectedMethod; // 'cash' | 'transfer' | 'other'
 
   @override
   void initState() {
     super.initState();
     installment = widget.installment;
-    _paymentController.text = (installment.amount - installment.paidAmount)
-        .toStringAsFixed(2);
+    // por defecto monto = saldo pendiente
+    final remaining = (installment.amount - installment.paidAmount).clamp(
+      0,
+      double.infinity,
+    );
+    _amountCtrl.text = remaining.toStringAsFixed(2);
   }
 
   @override
   void dispose() {
-    _paymentController.dispose();
+    _amountCtrl.dispose();
+    _otherDescCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _processPayment(double amount) async {
-    if (isLoading || isProcessingPayment) return;
+  // --------- Estados / UI coherente ---------
 
-    setState(() => isProcessingPayment = true);
+  String _installmentDisplayStatus(Installment i) {
+    // Si no está paga y está vencida → "Vencida"
+    if ((i.isPaid == false) && (i.isOverdue == true)) {
+      return 'Vencida';
+    }
+    // Normalizar lo que venga del backend (cuotas)
+    final s = normalizeInstallmentStatus(i.status);
+    // Si no viene claro, inferimos por montos
+    if (s.isEmpty || s == 'Pendiente') {
+      final paid = i.paidAmount;
+      final amt = i.amount;
+      if (paid >= amt - 1e-6) return 'Pagada';
+      if (paid > 0) return 'Parcialmente pagada';
+      return 'Pendiente';
+    }
+    return s;
+  }
+
+  bool _isFullyPaid(Installment i) =>
+      _installmentDisplayStatus(i).toLowerCase() == 'pagada';
+
+  // --------- Pago ---------
+
+  Future<void> _registerPayment() async {
+    if (isProcessingPayment) return;
 
     try {
-      // Validaciones en el frontend
-      if (amount <= 0) {
-        throw Exception('El monto debe ser mayor a cero');
+      final amount = double.tryParse(_amountCtrl.text.replaceAll(',', '.'));
+      if (amount == null || amount <= 0) {
+        _showErr('Ingrese un monto válido (> 0)');
+        return;
       }
 
-      final remainingAmount = installment.amount - installment.paidAmount;
-      if (amount > remainingAmount) {
-        throw Exception(
-          'El monto excede el saldo pendiente de \$${remainingAmount.toStringAsFixed(2)}',
+      final remaining = (installment.amount - installment.paidAmount).clamp(
+        0,
+        double.infinity,
+      );
+      if (amount > remaining + 1e-6) {
+        _showErr(
+          'El monto excede el saldo pendiente de \$${remaining.toStringAsFixed(2)}',
         );
+        return;
       }
 
-      // Llamar al nuevo servicio de pago de cuotas
-      final updatedInstallment = await ApiService.payInstallment(
+      if (_selectedMethod == null) {
+        _showErr('Seleccione el método/descr. del pago');
+        return;
+      }
+
+      String? description;
+      if (_selectedMethod == 'other') {
+        if (_otherDescCtrl.text.trim().isEmpty) {
+          _showErr('Describa el pago si selecciona “Otro”');
+          return;
+        }
+        description = _otherDescCtrl.text.trim();
+      }
+
+      setState(() => isProcessingPayment = true);
+
+      // Llama a la API enviando payment_type y description (opcional)
+      final result = await ApiService.payInstallment(
         installmentId: installment.id,
         amount: amount,
+        paymentType: _selectedMethod, // 'cash' | 'transfer' | 'other'
+        description: description, // sólo si "Otro"
       );
 
-      // Actualizar el estado con la cuota modificada
-      setState(() {
-        installment = updatedInstallment;
-      });
+      // actualizar la cuota en la UI
+      setState(() => installment = result.installment);
 
-      // Mostrar feedback al usuario
+      // si vino payment_id, compartir el recibo
+      if (result.paymentId != null) {
+        await shareReceiptByPaymentId(context, result.paymentId!);
+      }
+
+      final paidAll = amount >= remaining - 1e-6;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            amount == remainingAmount
-                ? 'Cuota marcada como pagada completamente'
-                : 'Pago parcial registrado exitosamente',
+            paidAll ? 'Cuota pagada por el total' : 'Pago parcial registrado',
           ),
           backgroundColor: secondaryColor,
         ),
       );
 
-      // Notificar a la pantalla anterior si es necesario
       widget.onPaymentSuccess?.call();
-
-      // Cerrar la pantalla y devolver true para indicar éxito
       Navigator.pop(context, true);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString()), backgroundColor: dangerColor),
-      );
+      _showErr(e.toString());
     } finally {
       setState(() => isProcessingPayment = false);
     }
   }
 
-  Future<void> _markAsFullyPaid() async {
-    final amountToPay = installment.amount - installment.paidAmount;
-    await _processPayment(amountToPay);
+  void _prefillRemaining() {
+    final remaining = (installment.amount - installment.paidAmount).clamp(
+      0,
+      double.infinity,
+    );
+    _amountCtrl.text = remaining.toStringAsFixed(2);
   }
 
-  Future<void> _registerPartialPayment() async {
-    final amount = double.tryParse(_paymentController.text);
-    if (amount == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Ingrese un monto válido'),
-          backgroundColor: dangerColor,
-        ),
-      );
-      return;
-    }
-    await _processPayment(amount);
+  void _showErr(String msg) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: dangerColor));
   }
 
-  Widget _buildPaymentStatusChip() {
-    if (installment.isPaid) {
-      return Chip(
-        label: Text('PAGADA COMPLETA', style: TextStyle(color: Colors.white)),
-        backgroundColor: secondaryColor,
-      );
-    } else if (installment.paidAmount > 0) {
-      return Chip(
-        label: Text('PAGO PARCIAL', style: TextStyle(color: Colors.white)),
-        backgroundColor: primaryColor,
-      );
-    } else {
-      return Chip(
-        label: Text(
-          installment.isOverdue ? 'VENCIDA' : 'PENDIENTE',
-          style: TextStyle(color: Colors.white),
-        ),
-        backgroundColor: installment.isOverdue ? dangerColor : Colors.orange,
-      );
-    }
+  // ---------------- UI ----------------
+
+  Widget _statusChip() {
+    final status = _installmentDisplayStatus(installment);
+    return Chip(
+      label: Text(
+        status.toUpperCase(),
+        style: const TextStyle(color: Colors.white),
+      ),
+      // ⬇️ color unificado para CUOTAS
+      backgroundColor: installmentStatusColor(status),
+    );
   }
 
-  Widget _buildPaymentProgress() {
-    final progress = installment.paidAmount / installment.amount;
-    final remaining = installment.amount - installment.paidAmount;
+  Widget _progress() {
+    final status = _installmentDisplayStatus(installment);
+    final progress =
+        (installment.paidAmount / installment.amount).clamp(0, 1).toDouble();
+    final remaining = (installment.amount - installment.paidAmount).clamp(
+      0,
+      double.infinity,
+    );
 
     return Column(
       children: [
@@ -148,9 +200,10 @@ class _InstallmentDetailScreenState extends State<InstallmentDetailScreen> {
           value: progress,
           minHeight: 10,
           backgroundColor: Colors.grey.shade200,
-          color: progress == 1 ? secondaryColor : primaryColor,
+          color:
+              status.toLowerCase() == 'pagada' ? secondaryColor : primaryColor,
         ),
-        SizedBox(height: 8),
+        const SizedBox(height: 8),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -168,131 +221,33 @@ class _InstallmentDetailScreenState extends State<InstallmentDetailScreen> {
     );
   }
 
-  Widget _buildPaymentActions() {
-    if (installment.isPaid) {
-      return Column(
-        children: [
-          Icon(Icons.check_circle, size: 60, color: secondaryColor),
-          SizedBox(height: 16),
-          Text(
-            'Esta cuota ya fue pagada completamente',
-            style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      children: [
-        Text(
-          'Opciones de pago:',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: primaryColor,
-          ),
-        ),
-        SizedBox(height: 16),
-        ElevatedButton.icon(
-          onPressed: isProcessingPayment ? null : _markAsFullyPaid,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: secondaryColor,
-            minimumSize: Size(double.infinity, 50),
-          ),
-          icon:
-              isProcessingPayment
-                  ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    ),
-                  )
-                  : Icon(Icons.check_circle, color: Colors.white),
-          label: Text(
-            isProcessingPayment
-                ? 'Procesando...'
-                : 'Marcar como Pagada Completa',
-            style: TextStyle(color: Colors.white),
-          ),
-        ),
-        SizedBox(height: 12),
-        Text(
-          'O pagar un monto específico:',
-          style: TextStyle(color: Colors.grey.shade600),
-        ),
-        SizedBox(height: 12),
-        TextField(
-          controller: _paymentController,
-          keyboardType: TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: 'Monto a pagar',
-            prefixText: '\$ ',
-            border: OutlineInputBorder(),
-            suffixIcon: IconButton(
-              icon: Icon(Icons.attach_money),
-              onPressed: () {
-                _paymentController.text = (installment.amount -
-                        installment.paidAmount)
-                    .toStringAsFixed(2);
-              },
-            ),
-            filled: isProcessingPayment,
-          ),
-          enabled: !isProcessingPayment,
-        ),
-        SizedBox(height: 12),
-        ElevatedButton(
-          onPressed: isProcessingPayment ? null : _registerPartialPayment,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: primaryColor,
-            minimumSize: Size(double.infinity, 50),
-          ),
-          child:
-              isProcessingPayment
-                  ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    ),
-                  )
-                  : Text(
-                    'Registrar Pago Parcial',
-                    style: TextStyle(color: Colors.white),
-                  ),
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final dueDate = DateFormat('dd/MM/yyyy').format(installment.dueDate);
+    final fullyPaid = _isFullyPaid(installment);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
           'Cuota #${installment.number}',
-          style: TextStyle(color: Colors.white),
+          style: const TextStyle(color: Colors.white),
         ),
         backgroundColor: primaryColor,
-        iconTheme: IconThemeData(color: Colors.white),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: SingleChildScrollView(
-        padding: EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Resumen de la cuota
             Card(
               elevation: 2,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Padding(
-                padding: EdgeInsets.all(16),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -301,60 +256,149 @@ class _InstallmentDetailScreenState extends State<InstallmentDetailScreen> {
                       children: [
                         Text(
                           'Cuota #${installment.number}',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        _buildPaymentStatusChip(),
+                        _statusChip(),
                       ],
                     ),
-                    SizedBox(height: 16),
-                    _buildDetailRow(
+                    const SizedBox(height: 16),
+                    _row(
                       'Monto total:',
                       '\$${installment.amount.toStringAsFixed(2)}',
                     ),
-                    _buildDetailRow(
+                    _row(
                       'Pagado:',
                       '\$${installment.paidAmount.toStringAsFixed(2)}',
                     ),
-                    _buildDetailRow('Vencimiento:', dueDate),
-                    SizedBox(height: 16),
-                    _buildPaymentProgress(),
+                    _row('Vencimiento:', dueDate),
+                    const SizedBox(height: 16),
+                    _progress(),
                   ],
                 ),
               ),
             ),
-            SizedBox(height: 24),
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            const SizedBox(height: 24),
+
+            // Registrar pago (solo si NO está pagada)
+            if (!fullyPaid)
+              Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      // Dropdown método/descr.
+                      DropdownButtonFormField<String>(
+                        value: _selectedMethod,
+                        items:
+                            _methods
+                                .map(
+                                  (m) => DropdownMenuItem(
+                                    value: m['value'],
+                                    child: Text(m['label']!),
+                                  ),
+                                )
+                                .toList(),
+                        decoration: const InputDecoration(
+                          labelText: 'Descripción del pago',
+                          hintText: 'Seleccioná el método',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (v) => setState(() => _selectedMethod = v),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Campo libre si “Otro”
+                      if (_selectedMethod == 'other')
+                        TextField(
+                          controller: _otherDescCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Detalle (obligatorio si elegís “Otro”)',
+                            border: OutlineInputBorder(),
+                          ),
+                          maxLines: 2,
+                        ),
+                      if (_selectedMethod == 'other')
+                        const SizedBox(height: 12),
+
+                      // Monto
+                      TextField(
+                        controller: _amountCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: 'Monto a pagar',
+                          prefixText: '\$ ',
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.payments),
+                            tooltip: 'Usar saldo pendiente',
+                            onPressed: _prefillRemaining,
+                          ),
+                        ),
+                        enabled: !isProcessingPayment,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Botón único
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          onPressed:
+                              isProcessingPayment ? null : _registerPayment,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryColor,
+                          ),
+                          icon:
+                              isProcessingPayment
+                                  ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                  : const Icon(
+                                    Icons.check_circle,
+                                    color: Colors.white,
+                                  ),
+                          label: Text(
+                            isProcessingPayment
+                                ? 'Procesando...'
+                                : 'Registrar pago',
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              child: Padding(
-                padding: EdgeInsets.all(16),
-                child: _buildPaymentActions(),
-              ),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
+  Widget _row(String a, String b) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
+          Text(a, style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+          const SizedBox(width: 8),
           Text(
-            label,
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-          ),
-          SizedBox(width: 8),
-          Text(
-            value,
-            style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+            b,
+            style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
           ),
         ],
       ),

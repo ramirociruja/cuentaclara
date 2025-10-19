@@ -26,7 +26,8 @@ metadata = MetaData()
 from app.models import models  # noqa: E402,F401
 
 # En producción lo ideal es Alembic, pero si no lo usás, esto está bien:
-Base.metadata.create_all(bind=engine)
+if os.getenv("ENV", "dev").lower() == "dev":
+    Base.metadata.create_all(bind=engine)
 
 def get_db():
     db = SessionLocal()

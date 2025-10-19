@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from app.database.db import get_db
-from app.utils.auth import hash_password, verify_password
+from app.utils.auth import hash_password, get_current_user
 from app import models, schemas
 from app.utils import auth
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeOut
@@ -13,7 +13,9 @@ from datetime import date
 from app.schemas.schemas import LoginRequest
 
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(get_current_user)]  # 🔒
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 

@@ -1,55 +1,59 @@
-from datetime import date, datetime
 from pydantic import BaseModel, Field
-from typing import Optional
-from typing import List 
-
-from app.schemas.installments import InstallmentOut
+from typing import Optional, List, Literal
+from datetime import date
+from .installments import InstallmentOut
 
 class LoansBase(BaseModel):
     customer_id: int
     amount: float
-    start_date: date
     installments_count: int
-    installment_amount: Optional[float] = None  # Puede ser calculado automáticamente
-    frequency: str = Field(..., pattern="^(weekly|monthly)$")
-    company_id: int  # Añadimos `company_id`
+    installment_amount: Optional[float] = None
+    frequency: str                      # "weekly" | "monthly" (como ya usás)
+    start_date: Optional[date] = None
+    status: Optional[str] = None
+    company_id: int
 
+    # NUEVOS
+    description: Optional[str] = None
+    collection_day: Optional[int] = Field(
+        None, ge=1, le=7,
+        description="Día de cobro ISO: 1=lunes … 7=domingo",
+    )
 
 class LoansCreate(LoansBase):
     pass
 
 class LoansUpdate(BaseModel):
     amount: Optional[float] = None
-    start_date: Optional[date] = None
     installments_count: Optional[int] = None
-    frequency: Optional[str] = Field(None, pattern="^(weekly|monthly)$")
+    installment_amount: Optional[float] = None
+    frequency: Optional[str] = None
+    start_date: Optional[date] = None
+    status: Optional[str] = None
+    company_id: Optional[int] = None
 
-class LoansOut(BaseModel):
+    # NUEVOS
+    description: Optional[str] = None
+    collection_day: Optional[int] = Field(None, ge=1, le=7)
+
+class LoansOut(LoansBase):
     id: int
-    customer_id: int
-    amount: float
     total_due: float
-    installments_count: int
-    installment_amount: float
-    frequency: str  # "weekly" or "monthly"
-    start_date: datetime
-    status: str  # "active", "paid", "defaulted"
-    company_id: int
-    installments: List[InstallmentOut]  # Lista de cuotas
+    installments: List[InstallmentOut] = []
+    company_id: Optional[int] = None
 
     class Config:
-        orm_mode = True
-
-class RefinanceRequest(BaseModel):
-    amount: Optional[float] = None
-    installments_count: int
-    start_date: date
-    frequency: str = Field(..., pattern="^(weekly|monthly)$")
-
-
-class LoanPaymentRequest(BaseModel):
-    amount_paid: float
+        from_attributes = True  # pydantic v2 (equiv. a orm_mode=True)
 
 class LoansSummaryResponse(BaseModel):
     count: int
     amount: float
+
+class LoanPaymentRequest(BaseModel):
+    amount_paid: float
+    payment_type: Optional[Literal["cash", "transfer", "other"]] = None
+    description: Optional[str] = None
+
+class RefinanceRequest(BaseModel):
+    new_amount: Optional[float] = None
+    new_installments: int

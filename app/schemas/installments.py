@@ -1,7 +1,10 @@
+from typing_extensions import Literal
 from pydantic import BaseModel, Field
 from datetime import date, datetime
 from typing import Optional
 
+
+PaymentType = Literal['cash', 'transfer', 'other']
 class InstallmentBase(BaseModel):
     amount: float
     due_date: datetime
@@ -17,13 +20,14 @@ class InstallmentUpdate(BaseModel):
 class InstallmentOut(BaseModel):
     id: int
     amount: float
-    due_date: date
+    due_date: datetime       
     status: str  # Asegúrate de que "status" esté incluido
     is_paid: bool
     loan_id: int
     is_overdue: bool  # Nueva propiedad para indicar si la cuota está vencida
     number: int  # Añadir el campo "number" para la cuota
     paid_amount: float
+    collection_day: Optional[int] = None
 
     class Config:
         orm_mode = True
@@ -31,6 +35,9 @@ class InstallmentOut(BaseModel):
 class InstallmentListOut(InstallmentOut):
     customer_name: Optional[str] = None
     debt_type: Optional[str] = None  # "loan" | "purchase"
+    customer_id: Optional[int] = None            # 👈 NUEVO
+    customer_phone: Optional[str] = None         # 👈 NUEVO
+    
 class OverdueInstallmentOut(BaseModel):
     id: int
     due_date: datetime
@@ -64,10 +71,8 @@ class InstallmentPaymentRequest(BaseModel):
         default_factory=datetime.utcnow,
         description="Fecha del pago (opcional, por defecto ahora)"
     )
-    notes: Optional[str] = Field(
-        None,
-        description="Notas adicionales sobre el pago"
-    )
+    payment_type: Optional[PaymentType] = None   # NUEVO
+    description: Optional[str] = None            # NUEVO
 
 class InstallmentSummaryOut(BaseModel):
     pending_count: int
@@ -75,3 +80,10 @@ class InstallmentSummaryOut(BaseModel):
     overdue_count: int
     total_amount: float
     pending_amount: float
+
+class InstallmentPaymentResult(BaseModel):
+    payment_id: int
+    installment: InstallmentOut
+
+    class Config:
+        from_attributes = True  # Pydantic v2 (equiv. a orm_mode=True)

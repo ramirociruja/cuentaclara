@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:frontend/screens/overdue_screen.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:frontend/screens/weekly_installments_screen.dart';
@@ -207,37 +209,28 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         backgroundColor: primaryColor,
         iconTheme: const IconThemeData(color: Colors.white),
-        leading: PopupMenuButton<String>(
-          tooltip: 'Menú',
-          icon: const Icon(Icons.menu, color: Colors.white),
-          onSelected: (value) async {
-            switch (value) {
-              case 'sync':
-                await _sync();
-                break;
-              case 'logout':
-                // TODO: implementar logout real
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Sesión cerrada (demo)')),
-                );
-                break;
-            }
-          },
-          itemBuilder:
-              (ctx) => const [
-                PopupMenuItem(value: 'sync', child: Text('Sincronizar ahora')),
-                PopupMenuItem(value: 'logout', child: Text('Cerrar sesión')),
-              ],
+        // ≡ a la izquierda abre el Drawer (no más menú a la derecha)
+        leading: Builder(
+          builder:
+              (ctx) => IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => Scaffold.of(ctx).openDrawer(),
+                tooltip: 'Menú',
+              ),
         ),
+        // Botón de sincronizar a la derecha
         actions: [
           IconButton(
-            tooltip: 'Sincronizar ahora',
-            onPressed: _loading ? null : _sync,
             icon: const Icon(Icons.sync),
+            tooltip: 'Sincronizar',
+            onPressed: _loading ? null : _sync,
           ),
         ],
       ),
+
+      // NUEVO: Menú lateral
+      drawer: _appDrawer(),
+
       body:
           _loading
               ? const Center(
@@ -255,6 +248,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 12),
                     _executiveSummaryCard(),
                     const SizedBox(height: 12),
+                    _creditsBanner(),
+                    const SizedBox(height: 12),
                     _quickActions(),
                     const SizedBox(height: 12),
                     _overdueCard(),
@@ -265,39 +260,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _lastSyncRow() {
-    String subtitle;
+    String text;
     if (_lastSync == null) {
-      subtitle = 'Aún no sincronizado';
+      text = 'Última sincronización: —';
     } else {
       final dt = DateTime.tryParse(_lastSync!);
-      subtitle =
+      text =
           dt == null
-              ? 'Última sincronización: desconocida'
+              ? 'Última sincronización: —'
               : 'Última sincronización: ${_fmtDMY(dt)}';
     }
+
     return Row(
       children: [
         const Icon(Icons.cloud_sync_outlined, color: infoColor),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(subtitle, style: const TextStyle(color: Colors.black54)),
+          child: Text(text, style: const TextStyle(color: Colors.black54)),
         ),
-        TextButton.icon(
-          onPressed: _loading ? null : _sync,
-          icon: const Icon(Icons.sync),
-          label: const Text('Sincronizar'),
-        ),
+        // Nota: el botón "Sincronizar" se movió al AppBar (actions)
       ],
     );
   }
 
+  // Reemplazá tu método _executiveSummaryCard() por este:
   Widget _executiveSummaryCard() {
-    final double progress =
-        weeklyDueAmount == 0
-            ? 0
-            : (weeklyCollected / weeklyDueAmount).clamp(0, 1);
-    final bool overAchieved =
-        weeklyCollected > weeklyDueAmount && weeklyDueAmount > 0;
+    final double goal = weeklyDueAmount;
+    final double achieved = weeklyCollected;
+    final double progress = goal == 0 ? 0 : (achieved / goal).clamp(0, 1);
 
     return Card(
       elevation: 2,
@@ -305,98 +295,95 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Resumen semanal',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: primaryColor,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Semana ${_fmtDMY(_monday)} – ${_fmtDMY(_sunday)}',
-              style: const TextStyle(color: Colors.black54),
-            ),
-            const SizedBox(height: 12),
-
-            // KPIs
+            // Header
             Row(
               children: [
-                Expanded(child: _money('A cobrar (semana)', weeklyDueAmount)),
-                const SizedBox(width: 12),
-                Expanded(child: _money('Cobrado (semana)', weeklyCollected)),
+                const Icon(
+                  Icons.analytics_outlined,
+                  color: primaryColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Resumen semanal',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: primaryColor,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _weekChip(
+                  '${_fmtDM(_monday)} – ${_fmtDM(_sunday)}',
+                ), // <-- sin año
               ],
             ),
-
             const SizedBox(height: 12),
-            // Progreso semanal
-            Text(
-              'Progreso semanal',
-              style: TextStyle(
-                color: Colors.grey.shade800,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 10,
-                backgroundColor: Colors.grey.shade200,
-                valueColor: const AlwaysStoppedAnimation(primaryColor),
-              ),
-            ),
-            const SizedBox(height: 6),
+
+            // Cuerpo: IZQ métricas, DER gráfico
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
-                  child: Text(
-                    overAchieved
-                        ? '¡Superaste el objetivo semanal!'
-                        : 'Objetivo semanal en curso',
-                    style: const TextStyle(color: Colors.black54, fontSize: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _kpiLine(title: 'A cobrar', value: goal),
+                      const SizedBox(height: 8),
+                      _kpiLine(title: 'Cobrado', value: achieved),
+                    ],
                   ),
                 ),
-                Text(
-                  '${(progress * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
+                const SizedBox(width: 12),
+                _progressDonut(progress: progress), // más pequeño (ver abajo)
               ],
             ),
-
-            // Créditos de la semana (si hay datos)
-            if (weeklyCreditsCount > 0 || weeklyCreditsAmount > 0) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _money(
-                      'Créditos otorgados (semana)',
-                      weeklyCreditsCount,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _money(
-                      'Monto prestado (semana)',
-                      weeklyCreditsAmount,
-                    ),
-                  ),
-                ],
-              ),
-            ],
           ],
         ),
       ),
     );
   }
+
+  Widget _creditsBanner() {
+    if (weeklyCreditsCount == 0 && weeklyCreditsAmount == 0)
+      return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.receipt_long_outlined,
+            color: primaryColor,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'Créditos esta semana',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          // 👇 formato correcto de dinero
+          Text(
+            '${weeklyCreditsCount.toString()} • ${_moneyFmt.format(weeklyCreditsAmount)}',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Helpers nuevos (pegá dentro de la clase) ---
 
   Widget _overdueCard() {
     return Card(
@@ -441,9 +428,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const WeeklyInstallmentsScreen(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const OverdueScreen()),
                 );
               },
               child: const Text('Ver'),
@@ -570,20 +555,129 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _money(String label, num value) {
+  final NumberFormat _moneyFmt = NumberFormat.currency(
+    locale: 'es_AR',
+    symbol: r'$',
+  );
+
+  Widget _kpiLine({required String title, required num value}) {
+    final s = _moneyFmt.format(value);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          title,
           style: const TextStyle(color: Colors.black54, fontSize: 12),
         ),
         const SizedBox(height: 2),
         Text(
-          '\$${value.toStringAsFixed(2)}',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          s,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ), // más chico y prolijo
         ),
       ],
+    );
+  }
+
+  Widget _progressDonut({required double progress}) {
+    final pct = (progress * 100).clamp(0, 100).round();
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 72,
+            height: 72,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 7,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: const AlwaysStoppedAnimation(primaryColor),
+            ),
+          ),
+          Text(
+            '$pct%',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _weekChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 11, color: Colors.black54),
+      ),
+    );
+  }
+
+  String _fmtDM(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}';
+
+  Widget _appDrawer() {
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Encabezado simple
+            ListTile(
+              leading: const Icon(Icons.account_circle),
+              title: const Text('Menú'),
+              subtitle: const Text('CuentaClara'),
+            ),
+            const Divider(),
+
+            // Actividad
+            ListTile(
+              leading: const Icon(Icons.timeline_outlined),
+              title: const Text('Actividad'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/activity');
+              },
+            ),
+
+            // Perfil
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Perfil'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushNamed(context, '/profile');
+              },
+            ),
+
+            const Spacer(),
+            const Divider(),
+
+            // Cerrar sesión
+            ListTile(
+              leading: const Icon(Icons.logout, color: dangerColor),
+              title: const Text(
+                'Cerrar sesión',
+                style: TextStyle(color: dangerColor),
+              ),
+              onTap: () async {
+                await ApiService.clearAuth(); // borra tokens + emite loggedOut
+                // La app se redirige sola al Login por el listener global de authEvents
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

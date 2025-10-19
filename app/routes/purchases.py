@@ -2,11 +2,14 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from app.database.db import get_db
-from app.models.models import Company, Purchase, Customer, Installment
+from app.models.models import Company, Employee, Purchase, Customer, Installment
 from app.schemas.installments import InstallmentOut
 from app.schemas.purchases import PurchaseCreate, PurchaseOut
+from app.utils.auth import get_current_user
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(get_current_user)]  # 🔒
+)
 
 # Crear una nueva compra
 @router.post("/", response_model=PurchaseOut)
@@ -88,42 +91,60 @@ def delete_purchase(purchase_id: int, db: Session = Depends(get_db)):
 
 # Obtener todas las compras de un cliente específico - USADO
 @router.get("/customer/{customer_id}", response_model=list[PurchaseOut])
-def get_purchases_by_customer(customer_id: int, db: Session = Depends(get_db)):
-    purchases = db.query(Purchase).filter(Purchase.customer_id == customer_id).all()
+def get_purchases_by_customer(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    # Validar que el cliente exista y pertenezca a la misma empresa
+    customer = db.query(Customer).get(customer_id)
+    if not customer or customer.company_id != current.company_id:
+        return []
 
+    purchases = (
+        db.query(Purchase)
+          .filter(
+              Purchase.customer_id == customer_id,
+              Purchase.company_id == current.company_id,
+          )
+          .all()
+    )
     if not purchases:
         return []
 
-    purchase_outs = []
-    for purchase in purchases:
-        installments_out = []
-        for installment in purchase.installments:
-            is_overdue = installment.due_date < datetime.now(timezone.utc) and not installment.is_paid
+    out: list[PurchaseOut] = []
+    now = datetime.now(timezone.utc)
+
+    for p in purchases:
+        installments_out: list[InstallmentOut] = []
+        for inst in p.installments:
+            # usar paid_amount (snake_case) y calcular is_overdue de forma segura
+            is_overdue_calc = (inst.due_date < now) and (not inst.is_paid)
             installments_out.append(InstallmentOut(
-                id=installment.id,
-                amount=installment.amount,
-                due_date=installment.due_date,
-                status=installment.status,
-                is_paid=installment.is_paid,
-                is_overdue=is_overdue,
-                number=installment.number,
-                paidAmount=installment.paidAmount
+                id=inst.id,
+                amount=inst.amount,
+                due_date=inst.due_date,
+                status=inst.status,
+                is_paid=inst.is_paid,
+                is_overdue=is_overdue_calc or bool(getattr(inst, "is_overdue", False)),
+                number=inst.number,
+                paid_amount=inst.paid_amount,   # ✅ snake_case correcto
             ))
 
-        purchase_outs.append(PurchaseOut(
-            id=purchase.id,
-            customer_id=purchase.customer_id,
-            product_name=purchase.product_name,
-            amount=purchase.amount,
-            total_due=purchase.total_due,
-            installments=purchase.installments,
-            installment_amount=purchase.installment_amount,
-            frequency=purchase.frequency,
-            start_date=purchase.start_date,
-            status=purchase.status,
-            company_id=purchase.company_id,
-            installments_list=installments_out
+        out.append(PurchaseOut(
+            id=p.id,
+            customer_id=p.customer_id,
+            product_name=p.product_name,
+            amount=p.amount,
+            total_due=p.total_due,
+            installments=p.installments_count,     # ✅ usar *_count del modelo
+            installment_amount=p.installment_amount,
+            frequency=p.frequency,
+            start_date=p.start_date,
+            status=p.status,
+            company_id=p.company_id,
+            installments_list=installments_out,
         ))
 
-    return purchase_outs
+    return out
 

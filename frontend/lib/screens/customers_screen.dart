@@ -13,8 +13,10 @@ class CustomersScreen extends StatefulWidget {
 
 class _CustomersScreenState extends State<CustomersScreen> {
   static const Color primaryColor = Color(0xFF3366CC);
-  static const Color secondaryColor = Color(0xFF00CC66);
+  static const Color okColor = Color(0xFF00CC66);
   static const Color dangerColor = Color(0xFFFF4444);
+
+  int? _employeeId;
 
   String searchQuery = '';
   bool showOnlyDebtors = false;
@@ -27,174 +29,100 @@ class _CustomersScreenState extends State<CustomersScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchCustomers();
+    _bootstrap();
   }
 
-  Future<void> _fetchCustomers() async {
+  Future<void> _bootstrap() async {
     try {
+      if (!mounted) return; // ✅ guard antes de setState
       setState(() => isLoading = true);
-      final fetchedCustomers = await ApiService.fetchCustomersByEmployee();
 
-      // Verificar cuotas vencidas en paralelo
-      final debtStatus = await Future.wait(
-        fetchedCustomers.map((c) => _checkCustomerDebt(c)),
-      );
-
-      setState(() {
-        customers = fetchedCustomers;
-        for (int i = 0; i < fetchedCustomers.length; i++) {
-          hasOverdueInstallments[fetchedCustomers[i].id] = debtStatus[i];
-        }
-        isLoading = false;
-        isRefreshing = false;
-      });
+      _employeeId = await ApiService.getEmployeeId();
+      if (_employeeId == null) {
+        throw Exception('No se encontró el empleado logueado');
+      }
+      await _fetchCustomers();
     } catch (e) {
-      print("Error fetching customers: $e");
-      setState(() {
-        isLoading = false;
-        isRefreshing = false;
-      });
+      if (!mounted) return; // ✅ guard antes de setState / context
+      setState(() => isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Error al cargar los clientes'),
+          content: Text('Error inicializando: $e'),
           backgroundColor: dangerColor,
         ),
       );
     }
   }
 
-  Future<bool> _checkCustomerDebt(Customer customer) async {
+  Future<void> _fetchCustomers() async {
     try {
-      final overdueCount = await ApiService.fetchOverdueInstallmentCount(
-        customer.id,
+      if (!mounted) return; // ✅ guard antes de setState
+      setState(() {
+        isLoading = true;
+        isRefreshing = false;
+      });
+
+      // 1) Clientes del cobrador
+      final fetchedCustomers = await ApiService.fetchCustomersByEmployee();
+
+      // 2) Índice de clientes con cuotas VENCIDAS
+      final overdueItems = await ApiService.fetchInstallmentsEnriched(
+        employeeId: _employeeId,
+        dateFrom: null,
+        dateTo: null,
+        statusFilter: 'vencidas',
       );
-      return overdueCount > 0;
+      final overdueCustomerIds = <int>{
+        for (final r in overdueItems)
+          if (r.customerId != null) r.customerId!,
+      };
+
+      if (!mounted) return; // ✅ guard antes de setState
+      setState(() {
+        customers = fetchedCustomers;
+        hasOverdueInstallments = {
+          for (final c in fetchedCustomers)
+            c.id: overdueCustomerIds.contains(c.id),
+        };
+        isLoading = false;
+      });
     } catch (e) {
-      print("Error checking debt for customer ${customer.id}: $e");
-      return false;
+      if (!mounted) return; // ✅ guard antes de setState / context
+      setState(() {
+        isLoading = false;
+        isRefreshing = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al cargar los clientes: $e'),
+          backgroundColor: dangerColor,
+        ),
+      );
     }
   }
 
   Future<void> _refreshData() async {
+    if (!mounted) return; // ✅
     setState(() => isRefreshing = true);
     await _fetchCustomers();
   }
 
   List<Customer> get _filteredCustomers {
     return customers.where((c) {
-      final matchesQuery = c.name.toLowerCase().contains(
-        searchQuery.toLowerCase(),
-      );
+      final q = searchQuery.trim().toLowerCase();
+      final matchesQuery = q.isEmpty || c.name.toLowerCase().contains(q);
       final isDebtor = hasOverdueInstallments[c.id] ?? false;
       return matchesQuery && (!showOnlyDebtors || isDebtor);
     }).toList();
   }
 
-  Widget _buildCustomerCard(Customer customer) {
-    final hasDebt = hasOverdueInstallments[customer.id] ?? false;
-
-    return Card(
-      elevation: 2,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade300),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder:
-                  (context) => CustomerDetailScreen(customerId: customer.id),
-            ),
-          );
-          if (result == true) _fetchCustomers();
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              // Avatar del cliente
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: primaryColor.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.person, color: primaryColor, size: 30),
-              ),
-              const SizedBox(width: 16),
-              // Información del cliente
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      customer.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'DNI: ${customer.dni}',
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                    Text(
-                      'Tel: ${customer.phone}',
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            hasDebt
-                                ? dangerColor.withOpacity(0.1)
-                                : secondaryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            hasDebt ? Icons.warning : Icons.check_circle,
-                            size: 16,
-                            color: hasDebt ? dangerColor : secondaryColor,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            hasDebt ? 'Tiene cuotas vencidas' : 'Al día',
-                            style: TextStyle(
-                              color: hasDebt ? dangerColor : secondaryColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Flecha de navegación
-              Icon(Icons.chevron_right, color: Colors.grey.shade400),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  // ---------------- UI ----------------
 
   @override
   Widget build(BuildContext context) {
+    final total = customers.length;
+    final debtors = hasOverdueInstallments.values.where((v) => v).length;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -217,12 +145,19 @@ class _CustomersScreenState extends State<CustomersScreen> {
             context,
             MaterialPageRoute(builder: (context) => const AddCustomerScreen()),
           );
+
           if (result == true) {
             await _fetchCustomers();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Cliente creado exitosamente'),
-                backgroundColor: secondaryColor,
+
+            // ✅ proteger el MISMO BuildContext que vamos a usar
+            final ctx = context;
+            // Si tu SDK soporta context.mounted, dejá esta línea:
+            if (!(ctx as dynamic).mounted && !mounted) return;
+
+            ScaffoldMessenger.of(ctx).showSnackBar(
+              const SnackBar(
+                content: Text('Cliente creado exitosamente'),
+                backgroundColor: okColor,
               ),
             );
           }
@@ -235,48 +170,131 @@ class _CustomersScreenState extends State<CustomersScreen> {
         color: primaryColor,
         child: Column(
           children: [
-            // Barra de búsqueda y filtros
+            // Encabezado compacto con búsqueda + filtro + resumen
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Column(
                 children: [
+                  // Search
                   TextField(
                     decoration: InputDecoration(
-                      labelText: 'Buscar cliente...',
+                      hintText: 'Buscar cliente por nombre...',
                       prefixIcon: const Icon(Icons.search),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                         vertical: 12,
-                        horizontal: 16,
+                        horizontal: 12,
                       ),
                     ),
                     onChanged: (value) => setState(() => searchQuery = value),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
+
+                  // Resumen + Filtro
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Mostrar solo clientes con deuda',
-                        style: TextStyle(
-                          color: Colors.grey.shade700,
-                          fontWeight: FontWeight.w500,
+                      // Resumen
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            // was: primaryColor.withOpacity(.06)
+                            color: primaryColor.withValues(alpha: .06), // ✅
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              // was: primaryColor.withOpacity(.18)
+                              color: primaryColor.withValues(alpha: .18), // ✅
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.people_alt,
+                                size: 16,
+                                color: primaryColor,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '$total clientes',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: primaryColor,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Container(
+                                width: 5,
+                                height: 5,
+                                margin: const EdgeInsets.only(right: 6),
+                                decoration: const BoxDecoration(
+                                  color: dangerColor,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              Flexible(
+                                child: Text(
+                                  '$debtors con deuda',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: dangerColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      Switch(
-                        value: showOnlyDebtors,
-                        activeColor: primaryColor,
-                        onChanged:
-                            (value) => setState(() => showOnlyDebtors = value),
+
+                      const SizedBox(width: 8),
+
+                      // Toggle "Solo con deuda"
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Solo con deuda',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Switch.adaptive(
+                                  value: showOnlyDebtors,
+                                  onChanged:
+                                      (v) =>
+                                          setState(() => showOnlyDebtors = v),
+                                  activeColor: primaryColor,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-            // Lista de clientes
+
+            // Lista
             if (isLoading)
               const Expanded(
                 child: Center(
@@ -285,34 +303,18 @@ class _CustomersScreenState extends State<CustomersScreen> {
               )
             else if (_filteredCustomers.isEmpty)
               Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.people_outline,
-                        size: 48,
-                        color: Colors.grey.shade400,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        showOnlyDebtors
-                            ? 'No hay clientes con deuda'
-                            : 'No se encontraron clientes',
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ],
-                  ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: _emptyStateCard(),
                 ),
               )
             else
               Expanded(
-                child: ListView.builder(
+                child: ListView.separated(
                   physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                   itemCount: _filteredCustomers.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder:
                       (context, index) =>
                           _buildCustomerCard(_filteredCustomers[index]),
@@ -322,5 +324,202 @@ class _CustomersScreenState extends State<CustomersScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildCustomerCard(Customer customer) {
+    final hasDebt = hasOverdueInstallments[customer.id] ?? false;
+
+    final sideColor =
+        // was: dangerColor.withOpacity(.35)
+        hasDebt
+            ? dangerColor.withValues(alpha: .35)
+            : Colors.grey.shade300; // ✅
+
+    return Card(
+      elevation: 1.5,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: sideColor),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder:
+                  (context) => CustomerDetailScreen(customerId: customer.id),
+            ),
+          );
+          if (result == true) {
+            if (!mounted) {
+              return; // ✅ guard antes de llamar setState dentro de _fetchCustomers
+            }
+            await _fetchCustomers();
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Avatar
+              CircleAvatar(
+                radius: 22,
+                // was: primaryColor.withOpacity(.1)
+                backgroundColor: primaryColor.withValues(alpha: .1), // ✅
+                child: const Icon(Icons.person, color: primaryColor),
+              ),
+              const SizedBox(width: 12),
+
+              // Info cliente
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Nombre
+                    Text(
+                      customer.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    // DNI + Tel
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 4,
+                      children: [
+                        _miniMeta(Icons.badge_outlined, 'DNI ${customer.dni}'),
+                        _miniMeta(Icons.call_outlined, customer.phone),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // Estado (pill)
+                    _statusPill(hasDebt),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
+
+              // Chevron
+              const Icon(Icons.chevron_right_rounded, color: Colors.black38),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _miniMeta(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: Colors.black45),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusPill(bool hasDebt) {
+    final bg = hasDebt ? dangerColor : okColor;
+    final label = hasDebt ? 'Tiene cuotas vencidas' : 'Al día';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        // was: bg.withOpacity(.12)
+        color: bg.withValues(alpha: .12), // ✅
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            hasDebt ? Icons.warning_amber_rounded : Icons.check_circle_rounded,
+            size: 16,
+            color: bg.darken(.15),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: bg.darken(.15),
+              fontWeight: FontWeight.w800,
+              fontSize: 12.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyStateCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                // was: okColor.withOpacity(.1)
+                color: okColor.withValues(alpha: .1), // ✅
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.people_outline, color: okColor),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Sin resultados',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'No se encontraron clientes para los filtros aplicados.',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+extension on Color {
+  Color darken([double amount = .2]) {
+    assert(amount >= 0 && amount <= 1);
+    final hsl = HSLColor.fromColor(this);
+    final hslDark = hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0));
+    return hslDark.toColor();
   }
 }

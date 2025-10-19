@@ -4,33 +4,49 @@ from sqlalchemy.sql import func
 from app.database.db import Base
 from datetime import datetime, timezone
 
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
+
+from app.constants import InstallmentStatus, LoanStatus
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    email = Column(String, unique=True, index=True, nullable=True)
-    phone = Column(String, unique=True, nullable=True)
-    dni = Column(String, unique=True, index=True, nullable=True)
+    name = Column(String, nullable=False, index=True)
+
+    # ⚠️ Quitamos unique=True global para pasar a unicidad por empresa
+    email = Column(String, nullable=True, index=True)
+    phone = Column(String, nullable=True, index=True)
+    dni   = Column(String, nullable=True, index=True)
+
     address = Column(String, nullable=True)
     province = Column(String, nullable=True)
     created_at = Column(
-    DateTime(timezone=True),
-    default=lambda: datetime.now(timezone.utc),
-    nullable=False,
-    index=True
-)
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
 
-    
-    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True)
-    company_id = Column(Integer, ForeignKey('companies.id'))  # Aquí agregamos el `company_id`
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    company_id  = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
 
-
-
-    loans = relationship("Loan", back_populates="customer")
+    # ✅ Conservamos todas las relaciones que ya usabas
+    loans     = relationship("Loan", back_populates="customer")
     purchases = relationship("Purchase", back_populates="customer")
-    employee = relationship("Employee", back_populates="customers")  # Nueva relación
-    company = relationship("Company", back_populates="customers")  # Relación bidireccional
+    employee  = relationship("Employee", back_populates="customers")
+    company   = relationship("Company", back_populates="customers")
+
+    __table_args__ = (
+        # Unicidad por empresa (en vez de unique=True global)
+        UniqueConstraint("company_id", "dni",   name="uq_customer_company_dni"),
+        UniqueConstraint("company_id", "phone", name="uq_customer_company_phone"),
+        UniqueConstraint("company_id", "email", name="uq_customer_company_email"),
+    )
+
    
 
 class Employee(Base):
@@ -45,6 +61,7 @@ class Employee(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     company_id = Column(Integer, ForeignKey('companies.id'))
+    token_version = Column(Integer, nullable=False, default=0)
 
     company = relationship("Company", back_populates="employees")  # Relación bidireccional
     customers = relationship("Customer", back_populates="employee")  # Relación inversa
@@ -55,15 +72,19 @@ class Loan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"))
+    company_id = Column(Integer, ForeignKey('companies.id'))
+
     amount = Column(Float, nullable=False)
     total_due = Column(Float, nullable=False)  # Amount + interest
     installments_count = Column(Integer, nullable=False)
     installment_amount = Column(Float, nullable=False)
     frequency = Column(String, nullable=False)  # "weekly" or "monthly"
     start_date = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="active")  # "active", "paid", "defaulted"
+    status = Column(String, default=LoanStatus.ACTIVE.value)  # "active", "paid", "defaulted"
+    description = Column(String, nullable=True)
+    collection_day = Column(Integer, nullable=True)  # 1..7 (ISO: lunes=1)
     
-    company_id = Column(Integer, ForeignKey('companies.id'))
+    
     
     company = relationship("Company", back_populates="loans")  # Relación bidireccional
     customer = relationship("Customer", back_populates="loans")
@@ -83,7 +104,7 @@ class Purchase(Base):
     installment_amount = Column(Float, nullable=False)
     frequency = Column(String, nullable=False)  # "weekly" or "monthly"
     start_date = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="active")  # "active", "paid", "defaulted"
+    status = Column(String, default=LoanStatus.ACTIVE.value)  # "active", "paid", "defaulted"
     
     company_id = Column(Integer, ForeignKey('companies.id'))
     
@@ -100,10 +121,21 @@ class Payment(Base):
     loan_id = Column(Integer, ForeignKey("loans.id"), nullable=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=True)
     amount = Column(Float, nullable=False)
-    payment_date = Column(DateTime, default=datetime.utcnow)
-    
+    payment_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Anulación de pago
+    is_voided = Column(Boolean, default=False)
+    voided_at = Column(DateTime, nullable=True)
+    void_reason = Column(String, nullable=True)
+    voided_by_employee_id = Column(Integer, ForeignKey('employees.id'), nullable=True)
+
+    # Tipo y descripción del pago
+    payment_type = Column(String, nullable=True)   # 'cash' | 'transfer' | 'other'
+    description  = Column(String, nullable=True)   # texto libre / detalle
+
     loan = relationship("Loan", back_populates="payments")
     purchase = relationship("Purchase", back_populates="payments")
+
 
 
 class Installment(Base):
@@ -118,7 +150,9 @@ class Installment(Base):
     amount = Column(Float, nullable=False)
     paid_amount = Column(Float, default=0)
     is_paid = Column(Boolean, default=False)
-    status = Column(String, nullable=False)  # Campo para el estado de la cuota
+    # campo status (agregá/ajustá el default)
+    status = Column(String, nullable=False, default=InstallmentStatus.PENDING.value)
+    # Campo para el estado de la cuota
     is_overdue = Column(Boolean, default=False)  # Campo para indicar si está vencida
 
     # Relaciones
@@ -137,12 +171,12 @@ class Installment(Base):
             # Pago completo
             self.paid_amount = self.amount
             self.is_paid = True
-            self.status = "Pagada"
+            self.status = InstallmentStatus.PAID.value
             remaining_amount -= amount_needed
         else:
             # Pago parcial
             self.paid_amount += remaining_amount
-            self.status = "Parcialmente pagada"
+            self.status = InstallmentStatus.PARTIAL.value
             remaining_amount = 0
 
         return remaining_amount
@@ -158,3 +192,34 @@ class Company(Base):
     employees = relationship("Employee", back_populates="company")  # ✅
     loans = relationship("Loan", back_populates="company")
     purchases = relationship("Purchase", back_populates="company")
+
+
+class PaymentAllocation(Base):
+    __tablename__ = "payment_allocations"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # vínculo al pago y a la cuota
+    payment_id = Column(
+        Integer,
+        ForeignKey("payments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    installment_id = Column(
+        Integer,
+        ForeignKey("installments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # monto de este pago aplicado a ESA cuota
+    amount_applied = Column(Float, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # relaciones
+    payment = relationship("Payment", backref="allocations")
+    installment = relationship("Installment", backref="allocations")
+
+    
