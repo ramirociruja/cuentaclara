@@ -255,39 +255,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
                       ),
 
                       const SizedBox(width: 8),
-
-                      // Toggle "Solo con deuda"
-                      Flexible(
-                        fit: FlexFit.loose,
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text(
-                                  'Solo con deuda',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Switch.adaptive(
-                                  value: showOnlyDebtors,
-                                  onChanged:
-                                      (v) =>
-                                          setState(() => showOnlyDebtors = v),
-                                  activeColor: primaryColor,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                 ],

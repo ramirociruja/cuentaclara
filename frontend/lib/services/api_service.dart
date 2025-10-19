@@ -41,7 +41,8 @@ class ApiService {
   // Ahora soporta --dart-define=API_BASE_URL=http://IP:8000
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://192.168.100.5:8000',
+    defaultValue: 'https://cuentaclara-production.up.railway.app',
+    //defaultValue: 'http://192.168.100.5:8000',
   );
 
   static void _assertHttpsInRelease() {
@@ -1021,7 +1022,7 @@ class ApiService {
     required DateTime dateTo,
   }) async {
     final url = Uri.parse(
-      '$baseUrl/payments?employee_id=$employeeId'
+      '$baseUrl/payments/?employee_id=$employeeId'
       '&date_from=${dateFrom.toIso8601String()}'
       '&date_to=${dateTo.toIso8601String()}',
     );
