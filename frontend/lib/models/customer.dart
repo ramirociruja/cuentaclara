@@ -1,59 +1,64 @@
 class Customer {
   final int id;
-  final String name;
-  final String dni; // Campo DNI
+  final String firstName;
+  final String lastName;
+  final String dni;
   final String address;
   final String phone;
   final String province;
   final int companyId;
   final int employeeId;
-  final DateTime? createdAt; // Ahora es opcional y de tipo DateTime
-  final String email; // Agregado el campo email
+  final DateTime? createdAt;
+  final String email;
 
   Customer({
     required this.id,
-    required this.name,
-    required this.dni, // Campo DNI
+    required this.firstName,
+    required this.lastName,
+    required this.dni,
     required this.address,
     required this.phone,
     required this.province,
     required this.companyId,
     required this.employeeId,
-    this.createdAt, // Opcional
-    required this.email, // Agregado el campo email
+    this.createdAt,
+    required this.email,
   });
 
-  // Método toJson actualizado
+  String get fullName => ('$firstName $lastName').trim();
+
   Map<String, dynamic> toJson() {
     return {
-      'name': name,
+      'first_name': firstName,
+      'last_name': lastName,
       'dni': dni,
       'address': address,
       'phone': phone,
       'province': province,
       'company_id': companyId,
       'employee_id': employeeId,
-      'email': email, // Incluido el campo email
-      // No incluimos createdAt ni id
+      'email': email,
+      // no enviamos id/createdAt
     };
   }
 
-  // Método fromJson actualizado
   factory Customer.fromJson(Map<String, dynamic> json) {
     return Customer(
-      id: json['id'],
-      name: json['name'],
-      dni: json['dni'],
-      address: json['address'],
-      phone: json['phone'],
-      province: json['province'],
-      companyId: json['company_id'],
-      employeeId: json['employee_id'],
+      id: json['id'] as int,
+      firstName: (json['first_name'] ?? '').toString(),
+      lastName: (json['last_name'] ?? '').toString(),
+      dni: (json['dni'] ?? '').toString(),
+      address: (json['address'] ?? '').toString(),
+      phone: (json['phone'] ?? '').toString(),
+      province: (json['province'] ?? '').toString(),
+      companyId: json['company_id'] as int,
+      employeeId: json['employee_id'] as int,
       createdAt:
-          json['created_at'] != null
+          (json['created_at'] != null &&
+                  json['created_at'].toString().isNotEmpty)
               ? DateTime.parse(json['created_at'])
               : null,
-      email: json['email'], // Asegurando que se incluya el campo email
+      email: (json['email'] ?? '').toString(),
     );
   }
 }

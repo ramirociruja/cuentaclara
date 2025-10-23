@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:convert' show latin1;
 import 'package:flutter/material.dart';
 import 'package:frontend/models/customer.dart';
 import 'package:frontend/models/loan.dart';
@@ -312,7 +311,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                     const SizedBox(width: 16),
                     Expanded(
                       child: Text(
-                        _fixEncoding(customer!.name),
+                        _fixEncoding(customer!.fullName),
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -787,7 +786,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(
-            _fixEncoding(customer!.name),
+            _fixEncoding(customer!.fullName),
             style: const TextStyle(
               fontWeight: FontWeight.bold,
               color: Colors.white,

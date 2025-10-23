@@ -1,4 +1,5 @@
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.orm import Session
 from datetime import date, datetime, timedelta, timezone
@@ -13,6 +14,7 @@ from app.schemas.loans import (
 )
 from app.utils.auth import get_current_user
 from app.utils.ledger import recompute_ledger_for_loan
+from app.utils.license import ensure_company_active
 from app.utils.status import update_status_if_fully_paid
 from pydantic import BaseModel
 
@@ -21,7 +23,7 @@ from app.constants import InstallmentStatus, LoanStatus
 from app.utils.normalize import norm_loan_status
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user)],  # 👈 exige Bearer válido en todo el router
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)],  # 👈 exige Bearer válido en todo el router
 )
 
 # ---------- helpers fecha ----------
@@ -164,13 +166,19 @@ def create_loan(
         else:
             # mensual simple (aprox 4 semanas)
             due_date = start_date + timedelta(weeks=(i + 1) * 4)
+    
+    # comparar por fecha (no datetime)
+        due_only = due_date.date() if isinstance(due_date, datetime) else due_date
+        today = datetime.now(ZoneInfo("America/Argentina/Tucuman")).date()
+        is_overdue = (due_only < today)
+        init_status = InstallmentStatus.OVERDUE.value if is_overdue else InstallmentStatus.PENDING.value
 
         installment = Installment(
             loan_id=new_loan.id,
             amount=installment_amount,
             due_date=due_date,
             is_paid=False,
-            status=InstallmentStatus.PENDING.value,  # 👈 canónico
+            status= init_status,
             number=i + 1,
             paid_amount=0.0,
             is_overdue=False,

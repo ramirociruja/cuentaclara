@@ -110,7 +110,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
   List<Customer> get _filteredCustomers {
     return customers.where((c) {
       final q = searchQuery.trim().toLowerCase();
-      final matchesQuery = q.isEmpty || c.name.toLowerCase().contains(q);
+      final matchesQuery = q.isEmpty || c.fullName.toLowerCase().contains(q);
       final isDebtor = hasOverdueInstallments[c.id] ?? false;
       return matchesQuery && (!showOnlyDebtors || isDebtor);
     }).toList();
@@ -346,7 +346,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                   children: [
                     // Nombre
                     Text(
-                      customer.name,
+                      customer.fullName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

@@ -595,7 +595,8 @@ class ApiService {
     final response = await _put(
       url,
       body: jsonEncode({
-        'name': customer.name,
+        'first_name': customer.firstName,
+        'last_name': customer.lastName,
         'dni': customer.dni,
         'address': customer.address,
         'phone': customer.phone,
@@ -1215,6 +1216,30 @@ class ApiService {
     throw Exception(
       'GET /payments/$paymentId/allocations -> ${resp.statusCode}: ${utf8.decode(resp.bodyBytes)}',
     );
+  }
+
+  // ====== Perfil / Datos básicos ======
+
+  /// Devuelve el empleado por ID (mapa simple con campos del backend).
+  static Future<Map<String, dynamic>?> fetchEmployeeById(int employeeId) async {
+    final uri = Uri.parse('$baseUrl/employees/$employeeId');
+    final res = await _get(uri);
+    if (res.statusCode == 200) {
+      final j = _json(res);
+      if (j is Map<String, dynamic>) return j;
+    }
+    return null;
+  }
+
+  /// Devuelve la empresa por ID (mapa simple).
+  static Future<Map<String, dynamic>?> fetchCompanyById(int companyId) async {
+    final uri = Uri.parse('$baseUrl/companies/$companyId');
+    final res = await _get(uri);
+    if (res.statusCode == 200) {
+      final j = _json(res);
+      if (j is Map<String, dynamic>) return j;
+    }
+    return null;
   }
 
   // Pagos por cliente (opcionalmente con rango de fechas ISO 8601)

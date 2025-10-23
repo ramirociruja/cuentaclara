@@ -18,7 +18,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   final _formKey = GlobalKey<FormState>();
 
   // Controllers
-  final TextEditingController nameController = TextEditingController();
+  final TextEditingController firstNameController = TextEditingController();
+  final TextEditingController lastNameController = TextEditingController();
   final TextEditingController dniController = TextEditingController();
   final TextEditingController addressController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
@@ -83,7 +84,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
 
       final customer = Customer(
         id: 0,
-        name: nameController.text.trim(),
+        firstName: firstNameController.text.trim(),
+        lastName: lastNameController.text.trim(),
         dni: dniController.text.trim(),
         address: addressController.text.trim(),
         phone: phoneController.text.trim(),
@@ -131,6 +133,9 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
     int? maxLength,
     bool readOnly = false,
     VoidCallback? onTap,
+
+    // 👇 NUEVO: capitalización por defecto
+    TextCapitalization textCapitalization = TextCapitalization.words,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -138,6 +143,8 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
         controller: controller,
         readOnly: readOnly,
         onTap: onTap,
+        // 👇 aplica capitalización
+        textCapitalization: textCapitalization,
         decoration: InputDecoration(
           labelText: label,
           prefixIcon: icon != null ? Icon(icon) : null,
@@ -374,8 +381,18 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                   icon: Icons.badge_outlined,
                   children: [
                     _buildFormField(
-                      controller: nameController,
-                      label: 'Nombre completo',
+                      controller: firstNameController,
+                      label: 'Nombre',
+                      icon: Icons.person_outline,
+                      validator:
+                          (v) =>
+                              (v == null || v.trim().isEmpty)
+                                  ? 'Ingrese el nombre'
+                                  : null,
+                    ),
+                    _buildFormField(
+                      controller: lastNameController,
+                      label: 'Apellido',
                       icon: Icons.person_outline,
                       validator:
                           (v) =>

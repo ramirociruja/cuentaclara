@@ -320,7 +320,7 @@ class ReceiptService {
     String? customerName;
     try {
       final customer = await ApiService.fetchCustomerById(loan.customerId);
-      customerName = customer.name;
+      customerName = customer.fullName;
     } catch (_) {
       customerName = null;
     }

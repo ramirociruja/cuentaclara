@@ -4,7 +4,8 @@ from datetime import datetime
 
 # ---------- Base (entrada) ----------
 class CustomerBase(BaseModel):
-    name: str
+    first_name: str = Field(..., min_length=1)
+    last_name:  str = Field(..., min_length=0)
     dni: Optional[str] = Field(None, min_length=7)
     address: str
     phone: str
@@ -36,7 +37,8 @@ class CustomerCreate(CustomerBase):
 
 # ---------- Actualizar (todo opcional) ----------
 class CustomerUpdate(BaseModel):
-    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name:  Optional[str] = None
     dni: Optional[str] = Field(None, min_length=7)
     address: Optional[str] = None
     phone: Optional[str] = None
@@ -61,7 +63,8 @@ class CustomerUpdate(BaseModel):
 # ---------- Salida ----------
 class CustomerOut(BaseModel):
     id: int
-    name: str
+    first_name: str
+    last_name: str
     dni: Optional[str] = None
     address: str
     phone: str

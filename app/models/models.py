@@ -10,20 +10,22 @@ from datetime import datetime, timezone
 
 from app.constants import InstallmentStatus, LoanStatus
 
-
 class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, index=True)
 
-    # ⚠️ Quitamos unique=True global para pasar a unicidad por empresa
+    # 🔄 Nuevo esquema: sin "name"
+    first_name = Column(String, nullable=False, index=True)
+    last_name  = Column(String, nullable=False, index=True)
+
     email = Column(String, nullable=True, index=True)
     phone = Column(String, nullable=True, index=True)
     dni   = Column(String, nullable=True, index=True)
 
     address = Column(String, nullable=True)
     province = Column(String, nullable=True)
+
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -34,11 +36,17 @@ class Customer(Base):
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     company_id  = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
 
-    # ✅ Conservamos todas las relaciones que ya usabas
-    loans     = relationship("Loan", back_populates="customer")
-    purchases = relationship("Purchase", back_populates="customer")
-    employee  = relationship("Employee", back_populates="customers")
-    company   = relationship("Company", back_populates="customers")
+    employee = relationship("Employee", back_populates="customers", lazy="joined", foreign_keys=[employee_id])
+    company  = relationship("Company", back_populates="customers", lazy="joined")
+
+    loans     = relationship("Loan", back_populates="customer", lazy="selectin")
+    purchases = relationship("Purchase", back_populates="customer", lazy="selectin")
+
+    @property
+    def full_name(self) -> str:
+        # helper útil para mostrar en recibos u otras vistas
+        return f"{self.first_name} {self.last_name}".strip()
+
 
     __table_args__ = (
         # Unicidad por empresa (en vez de unique=True global)
@@ -188,6 +196,10 @@ class Company(Base):
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    service_status = Column(String, nullable=False, default="active", index=True)
+    license_expires_at = Column(DateTime(timezone=True), nullable=True)
+    suspended_at = Column(DateTime(timezone=True), nullable=True)
+    suspension_reason = Column(String, nullable=True)
     customers = relationship("Customer", back_populates="company")
     employees = relationship("Employee", back_populates="company")  # ✅
     loans = relationship("Loan", back_populates="company")

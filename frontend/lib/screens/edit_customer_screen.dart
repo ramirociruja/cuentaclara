@@ -20,7 +20,8 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
   final _formKey = GlobalKey<FormState>();
 
   // Controllers (se precargan con datos del cliente)
-  final TextEditingController nameController = TextEditingController();
+  final TextEditingController firstNameController = TextEditingController();
+  final TextEditingController lastNameController = TextEditingController();
   final TextEditingController dniController = TextEditingController();
   final TextEditingController addressController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
@@ -61,7 +62,8 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
   void initState() {
     super.initState();
     // Precarga de datos en los campos
-    nameController.text = widget.customer.name;
+    firstNameController.text = widget.customer.firstName;
+    lastNameController.text = widget.customer.lastName;
     dniController.text = widget.customer.dni;
     addressController.text = widget.customer.address;
     phoneController.text = widget.customer.phone;
@@ -72,7 +74,8 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
 
   @override
   void dispose() {
-    nameController.dispose();
+    firstNameController.dispose();
+    lastNameController.dispose();
     dniController.dispose();
     addressController.dispose();
     phoneController.dispose();
@@ -107,7 +110,8 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
     try {
       final updatedCustomer = Customer(
         id: widget.customer.id,
-        name: nameController.text.trim(),
+        firstName: firstNameController.text.trim(),
+        lastName: lastNameController.text.trim(),
         dni: dniController.text.trim(),
         address: addressController.text.trim(),
         phone: phoneController.text.trim(),
@@ -378,8 +382,18 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
                   icon: Icons.badge_outlined,
                   children: [
                     _buildFormField(
-                      controller: nameController,
-                      label: 'Nombre completo',
+                      controller: firstNameController,
+                      label: 'Nombre',
+                      icon: Icons.person_outline,
+                      validator:
+                          (v) =>
+                              (v == null || v.trim().isEmpty)
+                                  ? 'Ingrese el nombre'
+                                  : null,
+                    ),
+                    _buildFormField(
+                      controller: lastNameController,
+                      label: 'Apellido',
                       icon: Icons.person_outline,
                       validator:
                           (v) =>

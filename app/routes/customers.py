@@ -10,9 +10,10 @@ from app.database.db import SessionLocal
 from app.models.models import Customer, Employee
 from app.schemas.customers import CustomerCreate, CustomerUpdate, CustomerOut
 from app.utils.auth import get_current_user
+from app.utils.license import ensure_company_active
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user)],  # exige Bearer válido
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)],  # exige Bearer válido
 )
 
 # --- DB session helper ---
@@ -173,4 +174,7 @@ def get_customers_by_employee(
     return db.query(Customer).filter(
         Customer.company_id == current.company_id,
         Customer.employee_id == employee_id
-    ).order_by(Customer.name.asc()).all()
+    ).order_by(
+        Customer.last_name.asc(),
+        Customer.first_name.asc()
+    ).all()

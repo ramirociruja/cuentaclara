@@ -16,6 +16,7 @@ from app.schemas.installments import (
 )
 from app.utils.auth import get_current_user
 from app.utils.ledger import recompute_ledger_for_loan
+from app.utils.license import ensure_company_active
 from app.utils.status import update_status_if_fully_paid
 
 # 👇 NUEVO: estados canónicos y normalizador
@@ -23,7 +24,7 @@ from app.constants import InstallmentStatus
 from app.utils.normalize import norm_installment_status
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user)],  # 👈 exige Bearer en todas las rutas
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)],  # 👈 exige Bearer en todas las rutas
 )
 
 EPS = Decimal("0.000001")  # tolerancia para redondeos
@@ -180,7 +181,7 @@ def get_all_installment(
                 (Installment.loan_id.is_not(None), "loan"),
                 else_="purchase",
             ).label("debt_type"),
-            Customer.name.label("customer_name"),
+            func.btrim(func.concat_ws(' ', Customer.first_name, Customer.last_name)).label("customer_name"),
             Customer.id.label("customer_id"),
             Customer.phone.label("customer_phone"),
             Loan.collection_day.label("collection_day"),  # 👈 NUEVO

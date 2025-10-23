@@ -288,21 +288,23 @@ class _CreateLoanOrPurchaseScreenState
     return DropdownSearch<String>(
       asyncItems: (String filter) async {
         return customers
-            .where((c) => c.name.toLowerCase().contains(filter.toLowerCase()))
-            .map((c) => '${c.name} - ${c.dni}')
+            .where(
+              (c) => c.fullName.toLowerCase().contains(filter.toLowerCase()),
+            )
+            .map((c) => '${c.fullName} - ${c.dni}')
             .toList();
       },
       selectedItem:
           selectedClientId == null
               ? null
-              : customers.firstWhere((c) => c.id == selectedClientId).name,
+              : customers.firstWhere((c) => c.id == selectedClientId).fullName,
       onChanged: (value) {
         setState(() {
           selectedClientId =
               value == null
                   ? null
                   : customers
-                      .firstWhere((c) => '${c.name} - ${c.dni}' == value)
+                      .firstWhere((c) => '${c.fullName} - ${c.dni}' == value)
                       .id;
         });
       },

@@ -208,7 +208,7 @@ class _RegisterPaymentScreenState extends State<RegisterPaymentScreen> {
                   const SizedBox(height: 20),
                   _buildDetailRow(
                     "Cliente:",
-                    "${selectedCustomer!.name} (${selectedCustomer!.dni})",
+                    "${selectedCustomer!.fullName} (${selectedCustomer!.dni})",
                   ),
                   _buildDetailRow("Préstamo:", "#${selectedLoan!.id}"),
                   _buildDetailRow(
@@ -362,17 +362,19 @@ class _RegisterPaymentScreenState extends State<RegisterPaymentScreen> {
     return DropdownSearch<String>(
       asyncItems: (String filter) async {
         return customers
-            .where((c) => c.name.toLowerCase().contains(filter.toLowerCase()))
-            .map((c) => '${c.name} - ${c.dni}')
+            .where(
+              (c) => c.fullName.toLowerCase().contains(filter.toLowerCase()),
+            )
+            .map((c) => '${c.fullName} - ${c.dni}')
             .toList();
       },
       selectedItem:
           selectedCustomer == null
               ? null
-              : '${selectedCustomer!.name} - ${selectedCustomer!.dni}',
+              : '${selectedCustomer!.fullName} - ${selectedCustomer!.dni}',
       onChanged: (value) async {
         final customer = customers.firstWhere(
-          (c) => '${c.name} - ${c.dni}' == value,
+          (c) => '${c.fullName} - ${c.dni}' == value,
           orElse: () => customers.first,
         );
         setState(() {

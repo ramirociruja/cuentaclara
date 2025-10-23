@@ -21,6 +21,7 @@ from app.schemas.payments import (
     PaymentsSummaryResponse,
     PaymentUpdate,
 )
+from app.utils.license import ensure_company_active
 from app.utils.status import update_status_if_fully_paid
 from app.utils.auth import get_current_user
 from app.utils.ledger import recompute_ledger_for_loan
@@ -32,7 +33,7 @@ from app.utils.allocations import (
 )
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user)]  # 🔒 exige Bearer válido en todo el router
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)]  # 🔒 exige Bearer válido en todo el router
 )
 
 # ---------- helpers fecha ----------
@@ -277,6 +278,14 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
     Valida que el Payment pertenezca a la misma empresa que el usuario
     y arma contexto de cliente/empresa para el recibo.
     """
+    def _full_name(cust: Customer | None) -> str | None:
+        if not cust:
+            return None
+        fn = (getattr(cust, "first_name", "") or "").strip()
+        ln = (getattr(cust, "last_name", "") or "").strip()
+        full = f"{fn} {ln}".strip()
+        return full or None
+
     customer_name = None
     customer_doc = None
     customer_phone = None
@@ -289,7 +298,7 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
         if not loan or loan.company_id != current.company_id:
             raise HTTPException(status_code=404, detail="Payment no encontrado")
         if loan.customer:
-            customer_name = loan.customer.name
+            customer_name = _full_name(loan.customer)
             customer_doc = getattr(loan.customer, "dni", None)
             customer_phone = getattr(loan.customer, "phone", None)
         if loan.company:
@@ -301,7 +310,7 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
         if not purchase or purchase.company_id != current.company_id:
             raise HTTPException(status_code=404, detail="Payment no encontrado")
         if purchase.customer:
-            customer_name = purchase.customer.name
+            customer_name = _full_name(purchase.customer)
             customer_doc = getattr(purchase.customer, "dni", None)
             customer_phone = getattr(purchase.customer, "phone", None)
         if purchase.company:
@@ -325,6 +334,7 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
         "collector_name": collector_name,
         "reference": reference,
     }
+
 
 
 @router.get("/{payment_id}", response_model=PaymentDetailOut)

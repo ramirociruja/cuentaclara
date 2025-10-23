@@ -6,9 +6,10 @@ from app.models.models import Company, Employee, Purchase, Customer, Installment
 from app.schemas.installments import InstallmentOut
 from app.schemas.purchases import PurchaseCreate, PurchaseOut
 from app.utils.auth import get_current_user
+from app.utils.license import ensure_company_active
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user)]  # 🔒
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)]  # 🔒
 )
 
 # Crear una nueva compra

@@ -11,10 +11,11 @@ from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeOut
 from app.models.models import Installment, Loan, Employee
 from datetime import date
 from app.schemas.schemas import LoginRequest
+from app.utils.license import ensure_company_active
 
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user)]  # 🔒
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)]  # 🔒
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
