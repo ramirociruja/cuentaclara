@@ -9,7 +9,7 @@ class Customer {
   final int companyId;
   final int employeeId;
   final DateTime? createdAt;
-  final String email;
+  final String? email;
 
   Customer({
     required this.id,
@@ -22,7 +22,7 @@ class Customer {
     required this.companyId,
     required this.employeeId,
     this.createdAt,
-    required this.email,
+    this.email,
   });
 
   String get fullName => ('$firstName $lastName').trim();
@@ -37,7 +37,7 @@ class Customer {
       'province': province,
       'company_id': companyId,
       'employee_id': employeeId,
-      'email': email,
+      'email': (email != null && email!.trim().isNotEmpty) ? email : null,
       // no enviamos id/createdAt
     };
   }
@@ -58,7 +58,10 @@ class Customer {
                   json['created_at'].toString().isNotEmpty)
               ? DateTime.parse(json['created_at'])
               : null,
-      email: (json['email'] ?? '').toString(),
+      email:
+          (json['email'] == null || json['email'].toString().trim().isEmpty)
+              ? null
+              : json['email'].toString(),
     );
   }
 }

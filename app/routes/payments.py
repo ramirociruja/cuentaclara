@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends, Query, Path
+from typing import Optional
+from zoneinfo import ZoneInfo
+from fastapi import APIRouter, Body, HTTPException, Depends, Query, Path
 from pydantic import BaseModel
-from sqlalchemy.orm import Session, aliased
-from datetime import datetime, timezone
+from sqlalchemy.orm import Session, aliased, joinedload
+from datetime import datetime, timezone, date, time, timedelta
 from sqlalchemy import func, or_
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.database.db import get_db
 from app.models.models import (
@@ -25,104 +28,130 @@ from app.utils.license import ensure_company_active
 from app.utils.status import update_status_if_fully_paid
 from app.utils.auth import get_current_user
 from app.utils.ledger import recompute_ledger_for_loan
+from app.utils.time_windows import local_dates_to_utc_window as _local_dates_to_utc_window
 
 # Helpers de allocations
 from app.utils.allocations import (
     # allocate_payment_for_loan,  # (Se usará cuando registremos allocations en el flujo de imputación)
     delete_allocations_for_payment,
 )
+from app.utils.time_windows import parse_iso_aware_utc, local_dates_to_utc_window, AR_TZ
 
 router = APIRouter(
     dependencies=[Depends(get_current_user), Depends(ensure_company_active)]  # 🔒 exige Bearer válido en todo el router
 )
 
-# ---------- helpers fecha ----------
-def _parse_iso(dt: str | None) -> datetime | None:
-    if not dt:
-        return None
-    try:
-        return datetime.fromisoformat(dt.replace('Z', ''))
-    except Exception:
-        return None
-
-def _normalize_range(date_from: str | None, date_to: str | None):
-    df = _parse_iso(date_from)
-    dt = _parse_iso(date_to)
-    if df:
-        df = df.replace(hour=0, minute=0, second=0, microsecond=0)
-    if dt:
-        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
-    return df, dt
-# -----------------------------------
-
-def _parse_iso_flexible(s: str | None):
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        # Normalizamos a UTC "naive" para evitar comparar naïve vs aware
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
-    except Exception:
-        return None
-
-
 @router.get("/summary", response_model=PaymentsSummaryResponse)
 def get_payments_summary(
-    # Aceptamos ambos esquemas de nombres
-    date_from: str | None = Query(None, alias="date_from"),
-    date_to: str | None = Query(None, alias="date_to"),
-    start_date: str | None = Query(None, alias="start_date"),
-    end_date: str | None = Query(None, alias="end_date"),
-    employee_id: int | None = Query(None),
+    # admitimos ambos nombres para compat
+    date_from: Optional[str] = Query(None, alias="date_from"),
+    date_to:   Optional[str] = Query(None, alias="date_to"),
+    start_date: Optional[str] = Query(None, alias="start_date"),
+    end_date:   Optional[str] = Query(None, alias="end_date"),
+    employee_id: Optional[int] = Query(None),
+    province: Optional[str] = Query(None),
+    tz: Optional[str] = Query(None),   # zona horaria del usuario (default AR)
     db: Session = Depends(get_db),
-    current: Employee = Depends(get_current_user),
+    current: Employee = Depends(get_current_user),   # tu dependencia actual
 ):
-    # Elegimos el valor presente (front actual usa date_from/date_to)
+    """
+    Resumen de pagos:
+      - total_amount: suma de pagos NO anulados en el rango (scope por company)
+      - by_day: lista (fecha_local, monto) dentro del rango (agrupado por día LOCAL)
+      - Filtros opcionales: employee_id, province, tz
+    """
+
+    # --------- Normalización de rango ---------
+    # El front puede mandar:
+    #   a) fechas (YYYY-MM-DD) → queremos semana local → ventana UTC [start, end)
+    #   b) timestamps ISO (con hora/offset) → usamos esos instantes (y hacemos end exclusivo si aplica)
     raw_from = date_from or start_date
     raw_to   = date_to   or end_date
+    zone = ZoneInfo(tz) if tz else AR_TZ
 
-    start_dt = _parse_iso_flexible(raw_from)
-    end_dt   = _parse_iso_flexible(raw_to)
+    start_utc: Optional[datetime] = None
+    end_utc_excl: Optional[datetime] = None
 
+    # ¿son DATEs (yyyy-mm-dd) sin hora?
+    def _looks_like_date(s: Optional[str]) -> bool:
+        if not s: return False
+        # formato simple YYYY-MM-DD
+        return len(s) == 10 and s[4] == '-' and s[7] == '-'
+
+    if raw_from and raw_to and _looks_like_date(raw_from) and _looks_like_date(raw_to):
+        # caso (a): fechas locales → ventana UTC
+        dfrom = date.fromisoformat(raw_from)
+        dto   = date.fromisoformat(raw_to)
+        start_utc, end_utc_excl = _local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        # caso (b): timestamps → parse aware UTC
+        start_utc = parse_iso_aware_utc(raw_from)
+        end_utc   = parse_iso_aware_utc(raw_to)
+        # hacemos fin exclusivo si vino fin “al final del día” sin hora explícita (poco común aquí),
+        # o si simplemente queremos cerrar media-open intervals.
+        end_utc_excl = end_utc  # si querés forzar exclusividad siempre, dejá esta línea
+        # (opcional) si end_utc no es None y querés garantizar exclusividad por seguridad:
+        # if end_utc is not None: end_utc_excl = end_utc
+
+    # --------- Base de consulta ---------
     L  = aliased(Loan)
     P  = aliased(Purchase)
     CL = aliased(Customer)
     CP = aliased(Customer)
 
-    q = (
-        db.query(func.coalesce(func.sum(Payment.amount), 0.0))
+    base = (
+        db.query(Payment)
           .outerjoin(L, Payment.loan_id == L.id)
           .outerjoin(CL, L.customer_id == CL.id)
           .outerjoin(P, Payment.purchase_id == P.id)
           .outerjoin(CP, P.customer_id == CP.id)
+          .filter(Payment.is_voided == False)  # excluir pagos anulados
+          .filter(or_(CL.company_id == current.company_id,
+                      CP.company_id == current.company_id))
     )
 
-    if start_dt is not None:
-        q = q.filter(Payment.payment_date >= start_dt)
-    if end_dt is not None:
-        q = q.filter(Payment.payment_date <= end_dt)
+    if start_utc is not None:
+        base = base.filter(Payment.payment_date >= start_utc)
+    if end_utc_excl is not None:
+        base = base.filter(Payment.payment_date <  end_utc_excl)  # 👈 fin exclusivo
 
-    # 🔒 scope por empresa (loans o purchases)
-    q = q.filter(
-        or_(
-            CL.company_id == current.company_id,
-            CP.company_id == current.company_id,
-        )
-    )
-
-    # Filtro opcional por empleado (deuda asignada)
     if employee_id is not None:
-        q = q.filter(
-            or_(
-                CL.employee_id == employee_id,
-                CP.employee_id == employee_id,
-            )
-        )
+        base = base.filter(or_(CL.employee_id == employee_id,
+                               CP.employee_id == employee_id))
 
-    total = q.scalar() or 0.0
-    return PaymentsSummaryResponse(total_amount=float(total))
+    if province:
+        base = base.filter(or_(CL.province == province,
+                               CP.province == province))
+
+    # --------- total ---------
+    total_q = base.with_entities(func.coalesce(func.sum(Payment.amount), 0.0))
+    total = float(total_q.scalar() or 0.0)
+
+    # --------- by_day (agrupado por DÍA LOCAL) ---------
+    # Postgres: usamos timezone('<tz>', timestamptz) para ver el "día local".
+    # date(timezone(...)) → DATE en la zona del usuario.
+    tzname = (tz or "America/Argentina/Buenos_Aires")
+    day_local = func.date(func.timezone(tzname, Payment.payment_date))
+    by_day_rows = (
+        base.with_entities(
+            day_local.label("day"),
+            func.coalesce(func.sum(Payment.amount), 0.0).label("amount"),
+        )
+        .group_by(day_local)
+        .order_by(day_local)
+        .all()
+    )
+    by_day = [{"date": r.day, "amount": float(r.amount)} for r in by_day_rows]
+
+    # --- Si NO usás Postgres, hacé el group-by en Python:
+    # rows = base.with_entities(Payment.payment_date, Payment.amount).all()
+    # agg: dict[date, float] = {}
+    # for dt_utc, amt in rows:
+    #     d_local = dt_utc.astimezone(zone).date()
+    #     agg[d_local] = agg.get(d_local, 0.0) + float(amt or 0.0)
+    # by_day = [{"date": d, "amount": v} for d, v in sorted(agg.items())]
+
+    return PaymentsSummaryResponse(total_amount=total, by_day=by_day)
 
 
 # Register a new payment
@@ -135,10 +164,12 @@ def create_payment(
     if not payment.loan_id and not payment.purchase_id:
         raise HTTPException(status_code=400, detail="Debe indicar loan_id o purchase_id")
 
-    now = datetime.utcnow()
+    # ⏰ Siempre UTC aware
+    now_utc = datetime.now(timezone.utc)
 
-    # Validar scoping por empresa
+    # --- Validar scoping por empresa ---
     if payment.loan_id:
+        # Si usás SQLAlchemy 1.4+: loan = db.get(Loan, payment.loan_id)
         loan = db.query(Loan).get(payment.loan_id)
         if not loan:
             raise HTTPException(status_code=404, detail="Préstamo no encontrado")
@@ -152,9 +183,10 @@ def create_payment(
         if purchase.company_id != current.company_id:
             raise HTTPException(status_code=403, detail="No autorizado para esta compra")
 
+    # --- Crear pago en UTC ---
     new_p = Payment(
         amount=payment.amount,
-        payment_date=now,
+        payment_date=now_utc,            # 👈 guardado canonical en UTC (timestamptz)
         loan_id=payment.loan_id,
         purchase_id=payment.purchase_id,
         payment_type=payment.payment_type,
@@ -165,7 +197,7 @@ def create_payment(
     db.commit()
     db.refresh(new_p)
 
-    # Actualizar estado agregado (por préstamo o por compra)
+    # --- Actualizaciones derivadas (no bloquear alta ante errores) ---
     try:
         if new_p.loan_id:
             update_status_if_fully_paid(db, loan_id=new_p.loan_id, purchase_id=None)
@@ -173,14 +205,14 @@ def create_payment(
             db.commit()
         if new_p.purchase_id:
             update_status_if_fully_paid(db, loan_id=None, purchase_id=new_p.purchase_id)
+            db.commit()
     except Exception:
-        # no romper alta si la util tira error
+        # no romper alta si algo falla en utilidades
         pass
 
-    # NOTA IMPORTANTE:
-    # La registración de allocations (PaymentAllocation) se hará en el flujo de imputación
-    # real (donde aplicás el pago contra cuotas), para que el "take" quede EXACTO.
-    # Cuando integremos eso, llamaremos allocate_payment_for_loan(...) en el punto correcto.
+    # NOTA:
+    # Las imputaciones (PaymentAllocation) las hacés en el flujo específico de imputación,
+    # por eso no se tocan aquí.
 
     return new_p
 
@@ -204,27 +236,36 @@ def mark_next_installment_pending(db: Session, loan_id: int = None, purchase_id:
 
 # Get all payments
 @router.get("/", response_model=list[PaymentOut])
+@router.get("/", response_model=list[PaymentOut])
 def list_payments(
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
     employee_id: int | None = Query(None),
+    province: str | None = Query(None),   # 👈 opcional
+    tz: str | None = Query(None),
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    def _parse_iso(dt: str | None):
-        from datetime import datetime
-        if not dt:
-            return None
-        try:
-            return datetime.fromisoformat(dt.replace("Z", "+00:00"))
-        except Exception:
-            return None
+    zone = ZoneInfo(tz) if tz else AR_TZ
 
-    start_dt = _parse_iso(start_date)
-    end_dt = _parse_iso(end_date)
+    def _looks_like_date(s: str | None) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == '-' and s[7] == '-'
 
-    L = aliased(Loan)
-    P = aliased(Purchase)
+    start_utc = None
+    end_utc_excl = None
+
+    if _looks_like_date(start_date) and _looks_like_date(end_date):
+        dfrom = date.fromisoformat(start_date) if start_date else None
+        dto   = date.fromisoformat(end_date)   if end_date   else None
+        if dfrom and dto:
+            start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        start_utc = parse_iso_aware_utc(start_date)
+        end_utc   = parse_iso_aware_utc(end_date)
+        end_utc_excl = end_utc
+
+    L  = aliased(Loan)
+    P  = aliased(Purchase)
     CL = aliased(Customer)
     CP = aliased(Customer)
 
@@ -234,33 +275,41 @@ def list_payments(
           .outerjoin(CL, L.customer_id == CL.id)
           .outerjoin(P, Payment.purchase_id == P.id)
           .outerjoin(CP, P.customer_id == CP.id)
+          .options(
+              joinedload(Payment.loan).joinedload(Loan.customer),
+              joinedload(Payment.purchase).joinedload(Purchase.customer),
+          )
+          .filter(Payment.is_voided == False)  # 👈 excluye anulados
+          .filter(
+              or_(
+                  CL.company_id == current.company_id,
+                  CP.company_id == current.company_id,
+              )
+          )
     )
 
-    if start_dt:
-        q = q.filter(Payment.payment_date >= start_dt)
-    if end_dt:
-        q = q.filter(Payment.payment_date <= end_dt)
-
-    # 🔒 empresa actual
-    q = q.filter(
-        or_(
-            CL.company_id == current.company_id,
-            CP.company_id == current.company_id,
-        )
-    )
+    if start_utc is not None:
+        q = q.filter(Payment.payment_date >= start_utc)
+    if end_utc_excl is not None:
+        q = q.filter(Payment.payment_date < end_utc_excl)
 
     if employee_id is not None:
-        q = q.filter(
-            or_(
-                CL.employee_id == employee_id,
-                CP.employee_id == employee_id,
-            )
-        )
+        q = q.filter(or_(CL.employee_id == employee_id, CP.employee_id == employee_id))
+
+    # 👇 Filtro OPCIONAL por provincia (solo si viene)
+    if province:
+        q = q.filter(or_(CL.province == province, CP.province == province))
 
     rows = q.order_by(Payment.payment_date.desc(), Payment.id.desc()).all()
 
-    return [
-        PaymentOut(
+    out: list[PaymentOut] = []
+    for p in rows:
+        # resolvemos loan/purchase y su customer
+        loan = p.loan
+        purch = p.purchase
+        cust = (loan.customer if loan else None) or (purch.customer if purch else None)
+
+        out.append(PaymentOut(
             id=p.id,
             amount=float(p.amount or 0),
             payment_date=p.payment_date,
@@ -268,9 +317,13 @@ def list_payments(
             purchase_id=p.purchase_id,
             payment_type=p.payment_type,
             description=p.description,
-        )
-        for p in rows
-    ]
+            # 👇 enriquecidos para el front
+            customer_id=cust.id if cust else None,
+            customer_name=(f"{(cust.last_name or '').strip()} {(cust.first_name or '').strip()}".strip() if cust else None),
+            customer_province=(cust.province if cust else None),
+        ))
+
+    return out
 
 
 def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employee):
@@ -349,7 +402,6 @@ def get_payment_detail(
 
     ctx = _ensure_scope_and_get_context(db, payment, current)
 
-    # --- Resumen de préstamo (si corresponde) ---
     loan_total_amount = None
     loan_total_due = None
     installments_paid = None
@@ -357,29 +409,35 @@ def get_payment_detail(
     installments_pending = None
 
     if payment.loan_id:
-        # Traer cuotas del préstamo
         loan_ins = db.query(Installment).filter(Installment.loan_id == payment.loan_id).all()
         if loan_ins:
             loan_total_amount = float(sum((ins.amount or 0) for ins in loan_ins))
             loan_total_due = float(sum(max(0.0, (ins.amount or 0) - (ins.paid_amount or 0)) for ins in loan_ins))
-            today = datetime.utcnow().date()
-            paid = 0
-            over = 0
-            pend = 0
+
+            # 👇 usar día LOCAL AR (o podrías parametrizar tz si querés)
+            today_local = datetime.now(AR_TZ).date()
+
+            paid = over = pend = 0
             for ins in loan_ins:
                 amt = float(ins.amount or 0)
                 paid_amt = float(ins.paid_amount or 0)
                 is_paid = paid_amt >= amt - 1e-6
+
                 if is_paid:
                     paid += 1
                 else:
-                    due_date = getattr(ins, "due_date", None)
-                    if isinstance(due_date, datetime):
-                        due_date = due_date.date()
-                    if due_date and due_date < today:
+                    due_dt = getattr(ins, "due_date", None)
+                    # due_date podría ser aware UTC → comparar por fecha local
+                    if isinstance(due_dt, datetime):
+                        due_local_date = due_dt.astimezone(AR_TZ).date()
+                    else:
+                        # si fuera DATE puro
+                        due_local_date = due_dt
+                    if due_local_date and due_local_date < today_local:
                         over += 1
                     else:
                         pend += 1
+
             installments_paid = paid
             installments_overdue = over
             installments_pending = pend
@@ -400,13 +458,13 @@ def get_payment_detail(
         collector_name=ctx["collector_name"],
         receipt_number=getattr(payment, "receipt_number", None),
         reference=ctx["reference"],
-
         loan_total_amount=loan_total_amount,
         loan_total_due=loan_total_due,
         installments_paid=installments_paid,
         installments_overdue=installments_overdue,
         installments_pending=installments_pending,
     )
+
 
 
 @router.put("/{payment_id}", response_model=PaymentDetailOut)
@@ -461,45 +519,81 @@ class VoidPaymentRequest(BaseModel):
 @router.post("/void/{payment_id}", status_code=200)
 def void_payment(
     payment_id: int,
-    body: VoidPaymentRequest | None = None,
+    body: VoidPaymentRequest | None = Body(None),
     db: Session = Depends(get_db),
-    current: Employee = Depends(get_current_user),
+    current = Depends(get_current_user),   # Employee
 ):
     """
     Anula un pago:
       - Marca el Payment como is_voided=True y guarda motivo/fecha/usuario.
       - Elimina allocations del pago (si existen).
       - Recalcula TODAS las cuotas del préstamo afectado (replay de pagos no anulados).
+      - Actualiza estado y totales del préstamo.
     """
-    pay = db.query(Payment).get(payment_id)
-    if not pay:
-        raise HTTPException(status_code=404, detail="Pago no encontrado")
 
-    # P0: sólo anulación de pagos de préstamos (no de compras)
-    if pay.loan_id is None:
-        raise HTTPException(status_code=400, detail="La anulación P0 aplica sólo a pagos de préstamos")
+    try:
+        # 1) Bloqueo de la fila (evita doble anulación por doble tap)
+        pay = (
+            db.query(Payment)
+              .filter(Payment.id == payment_id)
+              .with_for_update()
+              .one_or_none()
+        )
+        if not pay:
+            raise HTTPException(status_code=404, detail="Pago no encontrado")
 
-    if pay.is_voided:
-        # idempotencia (si ya está anulado, respondemos OK igual)
-        return {"message": "El pago ya estaba anulado", "payment_id": pay.id, "loan_id": pay.loan_id}
+        # 2) P0: solo prestamos (no compras)
+        if pay.loan_id is None:
+            raise HTTPException(status_code=400, detail="La anulación P0 aplica sólo a pagos de préstamos")
 
-    # Marcar como anulado + auditoría básica
-    pay.is_voided = True
-    pay.voided_at = datetime.now(timezone.utc)
-    pay.void_reason = (body.reason if body else None)
-    pay.voided_by_employee_id = getattr(current, "id", None)
-    db.add(pay)
-    db.flush()
+        # 3) Scope por empresa
+        loan = db.query(Loan).filter(Loan.id == pay.loan_id).one_or_none()
+        if not loan:
+            raise HTTPException(status_code=404, detail="Préstamo no encontrado")
 
-    # Limpiar allocations del pago anulado (si existen)
-    delete_allocations_for_payment(db, pay.id)
-    db.flush()
+        if loan.company_id != current.company_id:
+            raise HTTPException(status_code=403, detail="No autorizado para anular pagos de otra compañía")
 
-    # Recalcular cuotas y estado del préstamo por "replay" de pagos no anulados
-    recompute_ledger_for_loan(db, pay.loan_id)
+        # 4) Idempotencia
+        if pay.is_voided:
+            return {"message": "El pago ya estaba anulado", "payment_id": pay.id, "loan_id": pay.loan_id}
 
-    db.commit()
-    return {"message": "Pago anulado", "payment_id": pay.id, "loan_id": pay.loan_id}
+        # 5) Marcar como anulado + auditoría
+        pay.is_voided = True
+        pay.voided_at = datetime.now(timezone.utc)
+        pay.void_reason = (body.reason if body else None)
+        pay.voided_by_employee_id = getattr(current, "id", None)
+        db.add(pay)
+        db.flush()
+
+        # 6) Eliminar allocations del pago anulado (si tu modelo las usa)
+        delete_allocations_for_payment(db, pay.id)
+        db.flush()
+
+        # 7) Recalcular ledger (replay de pagos no anulados)
+        recompute_ledger_for_loan(db, pay.loan_id)
+
+        # 8) Actualizar estado y totales del préstamo (incluye total_due)
+        update_status_if_fully_paid(db, loan_id=pay.loan_id, purchase_id=None)
+
+        db.commit()
+
+        # (Opcional) refrescar y devolver total_due actualizado
+        db.refresh(loan)
+        return {
+            "message": "Pago anulado",
+            "payment_id": pay.id,
+            "loan_id": pay.loan_id,
+            "loan_total_due": float(getattr(loan, "total_due", 0) or 0),
+            "loan_status": getattr(loan, "status", None),
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error de base de datos al anular el pago: {e}")
 
 
 # ===== NUEVO: allocations de un pago =====
@@ -544,21 +638,32 @@ def list_payments_by_customer(
     customer_id: int,
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
+    tz: str | None = Query(None),
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    """
-    Devuelve todos los pagos (no anulados) asociados a un cliente, ya sea por Loan o Purchase,
-    ordenados del más reciente al más antiguo. Scopeado por company del usuario actual.
-    """
-    # Aliases para joins simétricos
+    zone = ZoneInfo(tz) if tz else AR_TZ
+
+    def _looks_like_date(s: str | None) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == '-' and s[7] == '-'
+
+    start_utc = None
+    end_utc_excl = None
+
+    if _looks_like_date(start_date) and _looks_like_date(end_date):
+        dfrom = date.fromisoformat(start_date) if start_date else None
+        dto   = date.fromisoformat(end_date)   if end_date   else None
+        if dfrom and dto:
+            start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        start_utc = parse_iso_aware_utc(start_date)
+        end_utc   = parse_iso_aware_utc(end_date)
+        end_utc_excl = end_utc
+
     L = aliased(Loan)
     P = aliased(Purchase)
-    CL = aliased(Customer)  # cliente via loan
-    CP = aliased(Customer)  # cliente via purchase
-
-    start_dt = _parse_iso_flexible(start_date)
-    end_dt = _parse_iso_flexible(end_date)
+    CL = aliased(Customer)
+    CP = aliased(Customer)
 
     q = (
         db.query(Payment)
@@ -567,26 +672,14 @@ def list_payments_by_customer(
         .outerjoin(P, Payment.purchase_id == P.id)
         .outerjoin(CP, P.customer_id == CP.id)
         .filter(Payment.is_voided.is_(False))
-        # scope por empresa a través de loan/purchase
-        .filter(
-            or_(
-                L.company_id == current.company_id,
-                P.company_id == current.company_id,
-            )
-        )
-        # filtrar por el cliente
-        .filter(
-            or_(
-                CL.id == customer_id,
-                CP.id == customer_id,
-            )
-        )
+        .filter(or_(L.company_id == current.company_id, P.company_id == current.company_id))
+        .filter(or_(CL.id == customer_id, CP.id == customer_id))
     )
 
-    if start_dt is not None:
-        q = q.filter(Payment.payment_date >= start_dt)
-    if end_dt is not None:
-        q = q.filter(Payment.payment_date <= end_dt)
+    if start_utc is not None:
+        q = q.filter(Payment.payment_date >= start_utc)
+    if end_utc_excl is not None:
+        q = q.filter(Payment.payment_date < end_utc_excl)  # fin exclusivo
 
     rows = q.order_by(Payment.payment_date.desc(), Payment.id.desc()).all()
 
@@ -602,4 +695,5 @@ def list_payments_by_customer(
         )
         for p in rows
     ]
+
 

@@ -9,7 +9,6 @@ import 'package:frontend/models/loan.dart';
 import 'package:frontend/models/purchase.dart';
 import 'package:frontend/models/api_result.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:frontend/services/token_storage.dart';
@@ -54,6 +53,8 @@ class ApiService {
       );
     }
   }
+
+  static const String kTZ = 'America/Argentina/Buenos_Aires';
 
   // ----------------- Event bus (auth) -----------------
   static final _authEvents = StreamController<String>.broadcast();
@@ -846,15 +847,21 @@ class ApiService {
 
   /// KPIs para la pantalla (pendientes, cobradas, vencidas, totales).
   /// Backend: GET /installments/summary
+  /// KPIs para la pantalla (pendientes, cobradas, vencidas, totales).
+  /// Backend: GET /installments/summary
   static Future<Map<String, dynamic>> fetchInstallmentsSummary({
     int? employeeId,
     DateTime? dateFrom,
     DateTime? dateTo,
+    String? province, // <- NUEVO
+    bool byDay = false, // <- NUEVO
   }) async {
     final qp = <String, String>{};
     if (employeeId != null) qp['employee_id'] = '$employeeId';
     if (dateFrom != null) qp['date_from'] = _fmtDate(dateFrom);
     if (dateTo != null) qp['date_to'] = _fmtDate(dateTo);
+    if (province != null && province.isNotEmpty) qp['province'] = province;
+    if (byDay) qp['by_day'] = 'true';
 
     final uri = Uri.parse(
       '$baseUrl/installments/summary',
@@ -867,6 +874,35 @@ class ApiService {
     throw Exception(
       'GET /installments/summary -> ${resp.statusCode}: ${utf8.decode(resp.bodyBytes)}',
     );
+  }
+
+  /// Resumen de pagos (total + by_day opcional).
+  /// Backend: GET /payments/summary
+  static Future<Map<String, dynamic>> fetchPaymentsSummary({
+    required int employeeId,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String? province, // <- opcional
+    bool byDay = true, // <- por defecto queremos la serie diaria
+  }) async {
+    final qp = <String, String>{
+      'employee_id': '$employeeId',
+      'date_from': dateFrom.toUtc().toIso8601String(),
+      'date_to': dateTo.toUtc().toIso8601String(),
+    };
+    if (province != null && province.isNotEmpty) qp['province'] = province;
+    if (byDay) qp['by_day'] = 'true';
+    qp['tz'] = kTZ;
+
+    final uri = Uri.parse(
+      '$baseUrl/payments/summary',
+    ).replace(queryParameters: qp);
+    final resp = await _get(uri);
+    if (resp.statusCode == 200) {
+      return _json(resp)
+          as Map<String, dynamic>; // { total_amount, by_day: [...] }
+    }
+    throw Exception('No se pudo obtener el summary de pagos');
   }
 
   /// Marcar cuota como pagada. Intenta POST moderna y retrocede a PUT legacy.
@@ -1024,8 +1060,8 @@ class ApiService {
   }) async {
     final url = Uri.parse(
       '$baseUrl/payments/?employee_id=$employeeId'
-      '&date_from=${dateFrom.toIso8601String()}'
-      '&date_to=${dateTo.toIso8601String()}',
+      '&date_from=${dateFrom.toUtc().toIso8601String()}'
+      '&date_to=${dateTo.toUtc().toIso8601String()}',
     );
     final resp = await _get(url);
     if (resp.statusCode == 200) {
@@ -1042,12 +1078,11 @@ class ApiService {
     required DateTime dateFrom,
     required DateTime dateTo,
   }) async {
-    final df = DateFormat('yyyy-MM-dd');
     final uri = Uri.parse(
       '$baseUrl/loans/by-employee'
       '?employee_id=$employeeId'
-      '&date_from=${df.format(dateFrom)}'
-      '&date_to=${df.format(dateTo)}',
+      '&date_from=${dateFrom.toUtc().toIso8601String()}'
+      '&date_to=${dateTo.toUtc().toIso8601String()}',
     );
     final resp = await _get(uri);
     if (resp.statusCode == 200) {
@@ -1063,18 +1098,27 @@ class ApiService {
     required int employeeId,
     required DateTime dateFrom,
     required DateTime dateTo,
+    String? province, // <- NUEVO
+    bool byDay = false, // <- NUEVO (si querés serie diaria)
   }) async {
-    final url = Uri.parse(
-      '$baseUrl/loans/summary?employee_id=$employeeId'
-      '&date_from=${dateFrom.toIso8601String()}'
-      '&date_to=${dateTo.toIso8601String()}',
-    );
-    final resp = await _get(url);
+    final qp = <String, String>{
+      'employee_id': '$employeeId',
+      'date_from': dateFrom.toUtc().toIso8601String(),
+      'date_to': dateTo.toUtc().toIso8601String(),
+    };
+    if (province != null && province.isNotEmpty) qp['province'] = province;
+    if (byDay) qp['by_day'] = 'true';
+
+    final uri = Uri.parse(
+      '$baseUrl/loans/summary',
+    ).replace(queryParameters: qp);
+    final resp = await _get(uri);
     if (resp.statusCode == 200) {
       final data = _json(resp) as Map<String, dynamic>;
+      // Soporta salida con o sin by_day
       return CreditsSummary(
         (data['count'] ?? 0) as int,
-        (data['amount'] ?? 0).toDouble(),
+        (data['amount'] ?? data['originated_amount'] ?? 0).toDouble(),
       );
     }
     throw Exception('No se pudo obtener el summary de créditos');
@@ -1087,8 +1131,8 @@ class ApiService {
   }) async {
     final url = Uri.parse(
       '$baseUrl/payments/summary?employee_id=$employeeId'
-      '&date_from=${dateFrom.toIso8601String()}'
-      '&date_to=${dateTo.toIso8601String()}',
+      '&date_from=${dateFrom.toUtc().toIso8601String()}'
+      '&date_to=${dateTo.toUtc().toIso8601String()}',
     );
     final resp = await _get(url);
     if (resp.statusCode == 200) {
@@ -1096,6 +1140,89 @@ class ApiService {
       return (data['total_amount'] ?? 0).toDouble();
     }
     throw Exception('No se pudo obtener el summary de pagos');
+  }
+
+  /// Lista de cuotas para el rango, filtrable por paid/pending y provincia.
+  static Future<List<Map<String, dynamic>>> fetchInstallmentsList({
+    required int employeeId,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String? province,
+    required bool isPaid,
+  }) async {
+    final qp = <String, String>{
+      'employee_id': '$employeeId',
+      'date_from': _fmtDate(dateFrom),
+      'date_to': _fmtDate(dateTo),
+      'is_paid': isPaid ? 'true' : 'false',
+    };
+    if (province != null && province.isNotEmpty) qp['province'] = province;
+
+    final uri = Uri.parse(
+      '$baseUrl/installments/',
+    ).replace(queryParameters: qp);
+    final resp = await _get(uri);
+    if (resp.statusCode == 200) {
+      final data = _json(resp);
+      if (data is List) {
+        return data.cast<Map<String, dynamic>>();
+      }
+      return const [];
+    }
+    throw Exception('GET /installments -> ${resp.statusCode}');
+  }
+
+  /// Lista de préstamos originados en el rango, filtrable por provincia.
+  static Future<List<Map<String, dynamic>>> fetchLoansList({
+    required int employeeId,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String? province,
+  }) async {
+    final qp = <String, String>{
+      'employee_id': '$employeeId',
+      'date_from': dateFrom.toUtc().toIso8601String(),
+      'date_to': dateTo.toUtc().toIso8601String(),
+    };
+    if (province != null && province.isNotEmpty) qp['province'] = province;
+
+    final uri = Uri.parse('$baseUrl/loans/').replace(queryParameters: qp);
+    final resp = await _get(uri);
+    if (resp.statusCode == 200) {
+      final data = _json(resp);
+      if (data is List) {
+        return data.cast<Map<String, dynamic>>();
+      }
+      return const [];
+    }
+    throw Exception('GET /loans/ -> ${resp.statusCode}');
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchPaymentsList({
+    required int employeeId,
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    String? province,
+    int limit = 200,
+    int offset = 0,
+  }) async {
+    final qp = <String, String>{
+      'employee_id': '$employeeId',
+      'date_from': dateFrom.toUtc().toIso8601String(),
+      'date_to': dateTo.toUtc().toIso8601String(),
+      'limit': '$limit',
+      'offset': '$offset',
+    };
+    if (province != null && province.isNotEmpty) qp['province'] = province;
+
+    final uri = Uri.parse('$baseUrl/payments/').replace(queryParameters: qp);
+    final resp = await _get(uri);
+    if (resp.statusCode == 200) {
+      final data = _json(resp);
+      if (data is List) return data.cast<Map<String, dynamic>>();
+      return const [];
+    }
+    throw Exception('GET /payments -> ${resp.statusCode}');
   }
 
   // ====== DETALLE / EDICIÓN DE PAYMENTS ======

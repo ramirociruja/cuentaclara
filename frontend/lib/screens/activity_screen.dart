@@ -327,7 +327,7 @@ class _ActivityScreenState extends State<ActivityScreen>
           // filtro por semana (aunque el backend falle)
           final dt = DateTime.tryParse('${p['payment_date'] ?? ''}');
           if (dt == null) return false;
-          return _isWithinWeek(dt);
+          return _isWithinWeek(dt.toLocal());
         }).toList();
 
     // orden
@@ -838,7 +838,8 @@ class _PaymentsTab extends StatelessWidget {
           final loanId = p['loan_id'];
           final purchaseId = p['purchase_id'];
           final dt = DateTime.tryParse('${p['payment_date'] ?? ''}');
-          final dateTxt = dt == null ? '-' : df.format(dt);
+          final dateTxt =
+              dt == null ? '-' : df.format(dt.toLocal()); // <- toLocal()
           final method = _methodLabel(p['payment_type']);
           final customer = (p['customer_name'] ?? '').toString().trim();
 

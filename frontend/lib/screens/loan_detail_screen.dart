@@ -30,6 +30,29 @@ const String kPagada = 'Pagada';
 const String kParcial = 'Parcialmente pagada';
 const String kVencida = 'Vencida';
 
+DateTime? _parseAny(dynamic v) {
+  if (v == null) return null;
+  if (v is DateTime) return v;
+  if (v is int) {
+    // epoch: 13 dígitos = ms, 10 = seg (tomamos UTC)
+    return v > 9999999999
+        ? DateTime.fromMillisecondsSinceEpoch(v, isUtc: true)
+        : DateTime.fromMillisecondsSinceEpoch(v * 1000, isUtc: true);
+  }
+  try {
+    return DateTime.parse(v.toString());
+  } catch (_) {
+    return null;
+  }
+}
+
+String _fmtLocal(dynamic v, DateFormat fmt) {
+  final dt = _parseAny(v);
+  if (dt == null) return '-';
+  final local = dt.isUtc ? dt.toLocal() : dt;
+  return fmt.format(local);
+}
+
 class _LoanDetailScreenState extends State<LoanDetailScreen> {
   static const Color primaryColor = Color(0xFF3366CC);
   static const Color secondaryColor = Color(0xFF00CC66);
@@ -230,13 +253,14 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
           ),
           ...items.map((p) {
             final amount = (p['amount'] as num?)?.toDouble() ?? 0.0;
-            final dateStr = p['payment_date']?.toString();
-            DateTime? dt;
-            try {
-              dt = dateStr != null ? DateTime.parse(dateStr) : null;
-            } catch (_) {}
-            final when =
-                dt != null ? _dateTimeFmt.format(dt) : (dateStr ?? '-');
+            p['payment_date']?.toString();
+            try {} catch (_) {}
+            final rawDate = p['payment_date'] ?? p['created_at'];
+            final when = _fmtLocal(
+              rawDate,
+              _dateTimeFmt,
+            ); // _dateTimeFmt = DateFormat('dd/MM/yyyy HH:mm')
+
             final isVoided = p['is_voided'] == true;
 
             return Card(
@@ -255,12 +279,15 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                 subtitle: Text(isVoided ? '$when — ANULADO' : when),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () async {
-                  await Navigator.push(
+                  final changed = await Navigator.push<bool>(
                     context,
                     MaterialPageRoute(
                       builder: (_) => PaymentDetailScreen(payment: p),
                     ),
                   );
+                  if (changed == true && mounted) {
+                    await _refreshData();
+                  }
                 },
               ),
             );
@@ -285,10 +312,13 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
 
       if (items.length == 1) {
         final p = items.first;
-        await Navigator.push(
+        final changed = await Navigator.push<bool>(
           context,
           MaterialPageRoute(builder: (_) => PaymentDetailScreen(payment: p)),
         );
+        if (changed == true && mounted) {
+          await _refreshData();
+        }
         return;
       }
 
@@ -301,24 +331,18 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
               children: [
                 const ListTile(title: Text('Pagos de esta cuota')),
                 ...items.map((p) {
-                  final dateStr = p['payment_date']?.toString();
-                  DateTime? dt;
-                  try {
-                    dt =
-                        dateStr != null && dateStr.isNotEmpty
-                            ? DateTime.parse(dateStr)
-                            : null;
-                  } catch (_) {
-                    dt = null;
-                  }
-                  final when =
-                      dt != null ? _dateTimeFmt.format(dt) : (dateStr ?? '-');
+                  final rawDate = p['payment_date'] ?? p['created_at'];
+                  final when = _fmtLocal(
+                    rawDate,
+                    _dateTimeFmt,
+                  ); // -> muestra en hora local
+
+                  final id = (p['id'] as num?)?.toInt() ?? 0;
+                  final amount = (p['amount'] as num?)?.toDouble() ?? 0.0;
 
                   return ListTile(
                     leading: const Icon(Icons.receipt_long),
-                    title: Text(
-                      'Pago #${p['id']} — \$${(p['amount'] as num).toString()}',
-                    ),
+                    title: Text('Pago #$id — \$${amount.toStringAsFixed(2)}'),
                     subtitle: Text(when),
                     onTap: () => Navigator.pop(ctx, p),
                   );
@@ -330,12 +354,15 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
       );
 
       if (selected != null && mounted) {
-        await Navigator.push(
+        final changed = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
             builder: (_) => PaymentDetailScreen(payment: selected),
           ),
         );
+        if (changed == true && mounted) {
+          await _refreshData();
+        }
       }
     } catch (e) {
       if (!mounted) return;

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:frontend/screens/installment_detail_screen.dart';
 import 'package:frontend/shared/status.dart';
+import 'package:frontend/utils/utils.dart';
 
 class WeeklyInstallmentsScreen extends StatefulWidget {
   const WeeklyInstallmentsScreen({super.key});
@@ -35,13 +36,13 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen> {
 
   bool _hideByStatus(InstallmentListItem r) {
     final st = r.installment.status.trim().toLowerCase();
-    return st == 'cancelada' || st == 'refinanciada';
+    return st == 'canceled' || st == 'refinanced';
   }
 
   bool _isInCurrentWeek(DateTime d) {
-    final dd = DateTime(d.year, d.month, d.day);
-    final lo = DateTime(_monday.year, _monday.month, _monday.day);
-    final hi = DateTime(_sunday.year, _sunday.month, _sunday.day);
+    final dd = dateOnlyLocal(d.isUtc ? d.toLocal() : d);
+    final lo = dateOnlyLocal(_monday);
+    final hi = dateOnlyLocal(_sunday);
     return !dd.isBefore(lo) && !dd.isAfter(hi);
   }
 
@@ -63,9 +64,9 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen> {
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _monday = _toMonday(now);
-    _sunday = _monday.add(const Duration(days: 6));
+    final wr = weekRangeLocal(DateTime.now());
+    _monday = wr.monday;
+    _sunday = wr.sunday;
     _scrollCtrl.addListener(_onScrollHideSummary);
     _loadEmployeeId();
   }
@@ -114,16 +115,16 @@ class _WeeklyInstallmentsScreenState extends State<WeeklyInstallmentsScreen> {
   Future<List<InstallmentListItem>> _loadData() async {
     final list = await ApiService.fetchInstallmentsEnriched(
       employeeId: _employeeId,
-      dateFrom: _monday,
-      dateTo: _sunday,
+      dateFrom: _monday.toUtc(),
+      dateTo: _sunday.toUtc(),
       statusFilter: _onlyPending ? 'pendientes' : 'todas',
     );
 
-    // Nos quedamos SOLO con cuotas cuyo due_date cae en la semana
-    return list.where((r) => _isInCurrentWeek(r.installment.dueDate)).toList();
+    return list
+        .where((r) => _isInCurrentWeek(instDueLocal(r.installment)))
+        .toList();
   }
 
-  DateTime _toMonday(DateTime d) => d.subtract(Duration(days: d.weekday - 1));
   String _fmtDMY(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 

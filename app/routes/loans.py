@@ -3,13 +3,13 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.orm import Session
 from datetime import date, datetime, timedelta, timezone
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, literal, or_, and_
 
 from app.database.db import get_db
 from app.models.models import Loan, Installment, Customer, Company, Payment, Employee
 from app.schemas.installments import InstallmentOut
 from app.schemas.loans import (
-    LoansOut, LoansCreate, LoansSummaryResponse, LoansUpdate,
+    LoanListItem, LoansOut, LoansCreate, LoansSummaryResponse, LoansUpdate,
     RefinanceRequest, LoanPaymentRequest
 )
 from app.utils.auth import get_current_user
@@ -21,6 +21,9 @@ from pydantic import BaseModel
 # 🔹 NUEVO: Enums canónicos y normalizadores
 from app.constants import InstallmentStatus, LoanStatus
 from app.utils.normalize import norm_loan_status
+from app.utils.time_windows import parse_iso_aware_utc, local_dates_to_utc_window, AR_TZ
+from zoneinfo import ZoneInfo
+
 
 router = APIRouter(
     dependencies=[Depends(get_current_user), Depends(ensure_company_active)],  # 👈 exige Bearer válido en todo el router
@@ -28,6 +31,24 @@ router = APIRouter(
 
 # ---------- helpers fecha ----------
 from datetime import date as date_cls, datetime, timezone
+
+
+def loan_is_effective_for_loans(Loan):
+    """
+    Clausula 'préstamo efectivo' que NO referencia Installment.
+    Evita JOINs que multiplican filas cuando la entidad base es Loan.
+    Ajustá los nombres de campos a tu modelo real.
+    """
+    # Si tenés flags booleanos:
+    clauses = [ (getattr(Loan, "is_canceled", False) == False),
+                (getattr(Loan, "is_refinanced", False) == False) ]
+
+    # Si además usás un status string:
+    if hasattr(Loan, "status"):
+        clauses.append( ~getattr(Loan, "status").in_(["canceled", "cancelled", "refinanced"]) )
+
+    return and_(*clauses)
+
 
 def _parse_iso(dt: str | None) -> datetime | None:
     """
@@ -105,31 +126,200 @@ def loans_summary(
     employee_id: int | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    province: str | None = Query(None),
+    by_day: bool = Query(False),
+    tz: str | None = Query(None),
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    """
-    Resume cantidad y monto total de Loans con start_date en el rango.
-    Filtra SIEMPRE por la empresa del token y opcionalmente por employee_id.
-    """
-    df, dt = _normalize_range(date_from, date_to)
+    zone = ZoneInfo(tz) if tz else AR_TZ
 
-    q = db.query(func.count(Loan.id), func.coalesce(func.sum(Loan.amount), 0.0))
-    # 👇 filtro por empresa
-    if hasattr(Loan, "company_id"):
+    def _looks_like_date(s: str | None) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+    start_utc = end_utc_excl = None
+    if _looks_like_date(date_from) and _looks_like_date(date_to):
+        dfrom = date.fromisoformat(date_from) if date_from else None
+        dto   = date.fromisoformat(date_to)   if date_to   else None
+        if dfrom and dto:
+            start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        start_utc = parse_iso_aware_utc(date_from)
+        end_utc   = parse_iso_aware_utc(date_to)
+        end_utc_excl = end_utc
+
+    q = db.query(Loan)
+
+    needs_customer = (employee_id is not None) or (province is not None) or (not hasattr(Loan, "company_id"))
+    if hasattr(Loan, "company_id") and not needs_customer:
         q = q.filter(Loan.company_id == current.company_id)
     else:
-        q = q.join(Customer, Loan.customer_id == Customer.id).filter(Customer.company_id == current.company_id)
+        q = q.join(Customer, Loan.customer_id == Customer.id)\
+             .filter(Customer.company_id == current.company_id)
+        if employee_id is not None:
+            q = q.filter(Customer.employee_id == employee_id)
+        if province is not None:
+            q = q.filter(Customer.province == province)
 
-    if employee_id is not None:
-        q = q.join(Customer, Loan.customer_id == Customer.id).filter(Customer.employee_id == employee_id)
-    if df is not None:
-        q = q.filter(Loan.start_date >= df)
-    if dt is not None:
-        q = q.filter(Loan.start_date <= dt)
+    # ✅ filtro por préstamos efectivos sin tocar Installment
+    q = q.filter(loan_is_effective_for_loans(Loan))
 
-    count, amount = q.one()
-    return LoansSummaryResponse(count=int(count or 0), amount=float(amount or 0.0))
+    if start_utc is not None:
+        q = q.filter(Loan.start_date >= start_utc)
+    if end_utc_excl is not None:
+        q = q.filter(Loan.start_date <  end_utc_excl)
+
+    # ✅ Subquery DISTINCT para evitar multiplicación de filas en agregados
+    subq = q.with_entities(Loan.id.label("id"),
+                           func.coalesce(Loan.amount, 0.0).label("amount"),
+                           Loan.start_date.label("start_date"))\
+            .distinct(Loan.id)\
+            .subquery()
+
+    # KPIs
+    count = db.query(func.count(subq.c.id)).scalar() or 0
+    amount = db.query(func.coalesce(func.sum(subq.c.amount), 0.0)).scalar() or 0.0
+
+    result = {
+        "count": int(count),
+        "amount": float(amount),
+        "by_day": [],
+    }
+
+    if by_day:
+        tzname = tz or "America/Argentina/Buenos_Aires"
+        # agrupamos sobre el subquery para no duplicar
+        day_local = func.date(func.timezone(tzname, subq.c.start_date))
+        rows = (
+            db.query(
+                day_local.label("d"),
+                func.count(subq.c.id).label("cnt"),
+                func.coalesce(func.sum(subq.c.amount), 0.0).label("amt"),
+            )
+            .group_by(day_local)
+            .order_by(day_local)
+            .select_from(subq)
+            .all()
+        )
+        result["by_day"] = [
+            {"date": r.d, "count": int(r.cnt or 0), "amount": float(r.amt or 0.0)}
+            for r in rows
+        ]
+
+    return LoansSummaryResponse(**result)
+
+
+
+
+
+@router.get("/", response_model=List[LoanListItem])
+def list_loans(
+    employee_id: Optional[int] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    province: Optional[str] = Query(None),
+    tz: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    zone = ZoneInfo(tz) if tz else AR_TZ
+
+    def _looks_like_date(s: Optional[str]) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+    # ---- Rango local → ventana UTC ----
+    start_utc = end_utc_excl = None
+    if _looks_like_date(date_from) and _looks_like_date(date_to):
+        dfrom = date.fromisoformat(date_from) if date_from else None
+        dto   = date.fromisoformat(date_to)   if date_to   else None
+        if dfrom and dto:
+            start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        start_utc = parse_iso_aware_utc(date_from)
+        end_utc   = parse_iso_aware_utc(date_to)
+        end_utc_excl = end_utc
+
+    # Nombre cliente
+    cust_name = func.trim(
+        func.concat(
+            func.coalesce(Customer.first_name, ""),
+            literal(" "),
+            func.coalesce(Customer.last_name, "")
+        )
+    ).label("customer_name")
+
+    # ============================================================
+    # 1) SUBQUERY de IDs (sin ORDER BY ni DISTINCT ON problemático)
+    # ============================================================
+    needs_customer = (employee_id is not None) or (province is not None) or (not hasattr(Loan, "company_id"))
+
+    base_ids = db.query(Loan.id)
+
+    if hasattr(Loan, "company_id") and not needs_customer:
+        # Podemos filtrar por empresa directamente en Loan sin join
+        base_ids = base_ids.filter(Loan.company_id == current.company_id)
+    else:
+        # Necesitamos Customer para filtrar por company/employee/province
+        base_ids = (
+            base_ids.join(Customer, Loan.customer_id == Customer.id)
+                    .filter(Customer.company_id == current.company_id)
+        )
+        if employee_id is not None:
+            base_ids = base_ids.filter(Customer.employee_id == employee_id)
+        if province is not None:
+            base_ids = base_ids.filter(Customer.province == province)
+
+    # Excluir loans cancel/refinanced (usa sólo columnas de Loan)
+    base_ids = base_ids.filter(loan_is_effective_for_loans(Loan))
+
+    # Rango por start_date
+    if start_utc is not None:
+        base_ids = base_ids.filter(Loan.start_date >= start_utc)
+    if end_utc_excl is not None:
+        base_ids = base_ids.filter(Loan.start_date < end_utc_excl)
+
+    # DISTINCT de IDs SIN ORDER BY
+    ids_subq = base_ids.distinct().subquery()
+
+    # ============================================================
+    # 2) QUERY FINAL (trae columnas, joinea con Customer y ordena)
+    # ============================================================
+    q2 = (
+        db.query(
+            Loan.id.label("id"),
+            func.coalesce(Loan.amount, 0.0).label("amount"),
+            Loan.start_date.label("start_date"),
+            cust_name,
+            Customer.province.label("customer_province"),
+        )
+        .join(ids_subq, ids_subq.c.id == Loan.id)                 # restringe a IDs únicos
+        .join(Customer, Loan.customer_id == Customer.id)          # para enriquecer con datos del cliente
+    )
+
+    rows = (
+        q2.order_by(Loan.start_date.desc(), Loan.id.desc())       # orden correcto por fecha
+           .offset(offset)
+           .limit(limit)
+           .all()
+    )
+
+    return [
+        LoanListItem(
+            id=r.id,
+            amount=float(r.amount or 0.0),
+            start_date=r.start_date,
+            customer_name=(r.customer_name or "-"),
+            customer_province=r.customer_province,
+        )
+        for r in rows
+    ]
+
+
+
+
+
 
 # ============== CREATE ==============
 @router.post("/createLoan/", response_model=LoansOut, status_code=status.HTTP_201_CREATED)
@@ -138,19 +328,27 @@ def create_loan(
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    # Validar cliente y que pertenezca a la empresa del token
+    # Validar cliente y empresa
     customer = _assert_customer_same_company(loan.customer_id, db, current)
 
-    # Forzar empresa desde el token (ignoramos company_id del body)
-    start_date = loan.start_date or datetime.utcnow()
+    zone = AR_TZ  # si querés parametrizar por compañía/usuario, podés hacerlo
+    # start_date: si viene, normalizá a UTC; si no, now UTC
+    if loan.start_date:
+        sd = loan.start_date
+        if sd.tzinfo is None:
+            sd = sd.replace(tzinfo=timezone.utc)
+        start_date_utc = sd.astimezone(timezone.utc)
+    else:
+        start_date_utc = datetime.now(timezone.utc)
+
     new_loan = Loan(
         **loan.model_dump(exclude={"installments", "start_date", "company_id"}),
-        start_date=start_date,
+        start_date=start_date_utc,
         total_due=loan.amount,
-        company_id=current.company_id,     # 👈 forzado
+        company_id=current.company_id,
     )
 
-    # Calcular y (si existe la columna) setear installment_amount
+    # installment_amount
     installment_amount = round(loan.amount / loan.installments_count, 2)
     if hasattr(Loan, "installment_amount"):
         new_loan.installment_amount = installment_amount
@@ -159,43 +357,50 @@ def create_loan(
     db.commit()
     db.refresh(new_loan)
 
-    # Crear cuotas automáticamente (EN canónico)
+    # Crear cuotas automáticamente
     for i in range(loan.installments_count):
         if loan.frequency == "weekly":
-            due_date = start_date + timedelta(weeks=i + 1)
+            due_local = start_date_utc.astimezone(zone) + timedelta(weeks=i + 1)
         else:
-            # mensual simple (aprox 4 semanas)
-            due_date = start_date + timedelta(weeks=(i + 1) * 4)
-    
-    # comparar por fecha (no datetime)
-        due_only = due_date.date() if isinstance(due_date, datetime) else due_date
-        today = datetime.now(ZoneInfo("America/Argentina/Tucuman")).date()
-        is_overdue = (due_only < today)
+            # mensual simple (4 semanas aprox)
+            due_local = start_date_utc.astimezone(zone) + timedelta(weeks=(i + 1) * 4)
+
+        # due_date = midnight LOCAL → UTC
+        local_midnight = due_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        due_date_utc = local_midnight.astimezone(timezone.utc)
+
+        # status inicial según día local
+        today_local = datetime.now(zone).date()
+        is_overdue = (local_midnight.date() < today_local)
         init_status = InstallmentStatus.OVERDUE.value if is_overdue else InstallmentStatus.PENDING.value
 
         installment = Installment(
             loan_id=new_loan.id,
             amount=installment_amount,
-            due_date=due_date,
+            due_date=due_date_utc,      # 👈 UTC
             is_paid=False,
-            status= init_status,
+            status=init_status,          # EN canónico
             number=i + 1,
             paid_amount=0.0,
-            is_overdue=False,
+            is_overdue=is_overdue,
         )
         db.add(installment)
 
     db.commit()
     return new_loan
 
+
 # ============== LIST BY CUSTOMER ==============
 @router.get("/customer/{customer_id}", response_model=list[LoansOut])
 def get_loans_by_customer(
     customer_id: int,
+    tz: Optional[str] = Query(None),                     # 👈 NUEVO
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
     _assert_customer_same_company(customer_id, db, current)
+    zone = ZoneInfo(tz) if tz else AR_TZ
+    today_local = datetime.now(zone).date()
 
     q = db.query(Loan).filter(Loan.customer_id == customer_id)
     if hasattr(Loan, "company_id"):
@@ -208,21 +413,22 @@ def get_loans_by_customer(
     loan_outs: list[LoansOut] = []
     for loan in loans:
         installments_out: list[InstallmentOut] = []
-        for installment in loan.installments:
-            is_overdue = (
-                installment.due_date.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc)
-                and not installment.is_paid
-            )
+
+        for inst in loan.installments:
+            dd = inst.due_date
+            due_local_date = dd.astimezone(zone).date() if isinstance(dd, datetime) else dd
+            is_overdue = (not inst.is_paid) and (due_local_date and due_local_date < today_local)
+
             installments_out.append(InstallmentOut(
-                id=installment.id,
-                amount=installment.amount,
-                due_date=installment.due_date,
-                status=installment.status,  # ya en EN canónico
-                is_paid=installment.is_paid,
+                id=inst.id,
+                amount=inst.amount,
+                due_date=inst.due_date,
+                status=inst.status,
+                is_paid=inst.is_paid,
                 loan_id=loan.id,
                 is_overdue=is_overdue,
-                number=installment.number,
-                paid_amount=installment.paid_amount,
+                number=inst.number,
+                paid_amount=inst.paid_amount,
             ))
 
         loan_outs.append(LoansOut(
@@ -234,22 +440,38 @@ def get_loans_by_customer(
             installment_amount=getattr(loan, "installment_amount", None),
             frequency=loan.frequency,
             start_date=loan.start_date,
-            status=loan.status,  # EN canónico
+            status=loan.status,
             company_id=getattr(loan, "company_id", None),
             installments=installments_out,
         ))
 
     return loan_outs
 
+
 @router.get("/by-employee", response_model=List[LoansOut])
 def get_loans_by_employee(
     employee_id: int = Query(...),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
+    tz: Optional[str] = Query(None),                      # 👈 NUEVO
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    df, dt = _normalize_range(date_from, date_to)
+    zone = ZoneInfo(tz) if tz else AR_TZ
+
+    def _looks_like_date(s: str | None) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+    start_utc = end_utc_excl = None
+    if _looks_like_date(date_from) and _looks_like_date(date_to):
+        dfrom = date.fromisoformat(date_from) if date_from else None
+        dto   = date.fromisoformat(date_to)   if date_to   else None
+        if dfrom and dto:
+            start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        start_utc = parse_iso_aware_utc(date_from)
+        end_utc   = parse_iso_aware_utc(date_to)
+        end_utc_excl = end_utc
 
     q = db.query(Loan)
     if hasattr(Loan, "company_id"):
@@ -261,37 +483,27 @@ def get_loans_by_employee(
     q = q.join(Customer, Loan.customer_id == Customer.id)\
          .filter(Customer.employee_id == employee_id)
 
-    if df is not None:
-        q = q.filter(Loan.start_date >= df)
-    if dt is not None:
-        q = q.filter(Loan.start_date <= dt)
+    if start_utc is not None:
+        q = q.filter(Loan.start_date >= start_utc)
+    if end_utc_excl is not None:
+        q = q.filter(Loan.start_date <  end_utc_excl)
 
     loans = q.order_by(Loan.start_date.desc(), Loan.id.desc()).all()
 
     out: List[LoansOut] = []
+    today_local = datetime.now(zone).date()
+
     for loan in loans:
-        # start_date -> date (no datetime)
-        sd = loan.start_date
-        if isinstance(sd, datetime):
-            sd = sd.date()
-        elif sd is None:
-            sd = None  # respeta Optional[date]
-
-        # company_id garantizado (si en modelo es obligatorio)
-        comp_id = getattr(loan, "company_id", None) or current.company_id
-
         inst_out: List[InstallmentOut] = []
         for inst in loan.installments:
-            is_overdue = (
-                inst.due_date and
-                inst.due_date.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc) and
-                not inst.is_paid
-            )
+            dd = inst.due_date
+            due_local_date = dd.astimezone(zone).date() if isinstance(dd, datetime) else dd
+            is_overdue = (not inst.is_paid) and (due_local_date and due_local_date < today_local)
             inst_out.append(InstallmentOut(
                 id=inst.id,
                 amount=inst.amount,
                 due_date=inst.due_date,
-                status=inst.status,  # EN canónico
+                status=inst.status,
                 is_paid=inst.is_paid,
                 loan_id=loan.id,
                 is_overdue=is_overdue,
@@ -307,14 +519,15 @@ def get_loans_by_employee(
             installments_count=loan.installments_count,
             installment_amount=getattr(loan, "installment_amount", None),
             frequency=loan.frequency,
-            start_date=sd,
-            status=loan.status,  # EN canónico
-            company_id=comp_id,
+            start_date=loan.start_date,
+            status=loan.status,
+            company_id=getattr(loan, "company_id", None),
             description=getattr(loan, "description", None),
             collection_day=getattr(loan, "collection_day", None),
             installments=inst_out,
         ))
     return out
+
 
 @router.put("/{loan_id}", response_model=LoansOut)
 def update_loan(
@@ -496,7 +709,7 @@ def pay_loan_installments(
         amount=float(applied_amount),
         loan_id=loan.id,
         purchase_id=None,
-        payment_date=datetime.utcnow(),
+        payment_date=datetime.now(timezone.utc),
         payment_type=payment.payment_type,
         description=(payment.description or "").strip() or None
     )

@@ -57,7 +57,8 @@ class ReceiptService {
       if (v == null) return '-';
       try {
         final dt = v is DateTime ? v : DateTime.parse(v.toString());
-        return _date.format(dt);
+        final local = dt.isUtc ? dt.toLocal() : dt;
+        return _date.format(local); // dd/MM/yyyy HH:mm
       } catch (_) {
         return _str(v);
       }
@@ -381,18 +382,23 @@ class ReceiptService {
 
     // ===== Helpers =====
     final money = NumberFormat.currency(locale: 'es_AR', symbol: r'$');
-    final df = DateFormat('dd/MM/yyyy');
     String fmtMoney(num v) => money.format(v.toDouble());
+    final df = DateFormat('dd/MM/yyyy');
+
     String fmtDateStr(String iso) {
       try {
         final d = DateTime.parse(iso);
-        return df.format(d);
+        final local = d.isUtc ? d.toLocal() : d;
+        return df.format(local);
       } catch (_) {
         return iso;
       }
     }
 
-    String fmtDate(DateTime d) => df.format(d);
+    String fmtDate(DateTime d) {
+      final local = d.isUtc ? d.toLocal() : d;
+      return df.format(local);
+    }
 
     // ===== Datos principales
     final total = loan.amount;
@@ -643,7 +649,11 @@ class ReceiptService {
                         dt = dtStr != null ? DateTime.parse(dtStr) : null;
                       } catch (_) {}
                       final fecha =
-                          dt != null ? _date.format(dt) : (dtStr ?? '-');
+                          dt != null
+                              ? _date.format(
+                                dt.isUtc ? dt.toLocal() : dt,
+                              ) // 👈 a local
+                              : (dtStr ?? '-');
 
                       final monto = (p['amount'] as num?)?.toDouble() ?? 0.0;
                       final metodo =

@@ -13,7 +13,7 @@ from app.utils.auth import get_current_user
 from app.utils.license import ensure_company_active
 
 router = APIRouter(
-    dependencies=[Depends(get_current_user), Depends(ensure_company_active)],  # exige Bearer válido
+    dependencies=[Depends(get_current_user), Depends(ensure_company_active)],
 )
 
 # --- DB session helper ---
@@ -29,7 +29,6 @@ def normalize_phone(phone: str | None) -> str | None:
     if not phone:
         return None
     digits = re.sub(r"\D", "", phone)
-    # Opcional: limpieza típica AR
     if digits.startswith("0"):
         digits = digits[1:]
     if digits.startswith("54") and len(digits) > 10:
@@ -38,6 +37,10 @@ def normalize_phone(phone: str | None) -> str | None:
 
 def _404():
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recurso no encontrado")
+
+def _is_admin_or_manager(emp: Employee) -> bool:
+    # Ajustá según tus roles reales
+    return emp.role in {"admin", "manager", "ADMIN", "MANAGER"}
 
 # ===========================
 #        CREATE
@@ -48,15 +51,28 @@ def create_customer(
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    # Forzar scope por empresa desde el token
     phone_norm = normalize_phone(payload.phone)
     data = payload.model_dump(exclude_unset=True)
     data.pop("created_at", None)
     data["phone"] = phone_norm
-    data["company_id"] = current.company_id  # 👈 ignoramos company_id del body
 
-    # Pre-chequeo de duplicados dentro de la empresa
-    qdup = db.query(Customer).filter(Customer.company_id == current.company_id)
+    # Forzar scope por empresa desde el token
+    data["company_id"] = current.company_id
+
+    # Determinar el owner empleado (unicidad por empleado)
+    owner_employee_id: int
+    if _is_admin_or_manager(current):
+        # Admin/manager puede crear para otro empleado si viene en el body
+        owner_employee_id = int(data.get("employee_id") or current.id)
+    else:
+        # Cobrador: siempre él mismo
+        owner_employee_id = current.id
+    data["employee_id"] = owner_employee_id  # asegurar consistencia
+
+    # Pre-chequeo de duplicados dentro del EMPLEADO (no por empresa)
+    qdup = db.query(Customer).filter(
+        Customer.employee_id == owner_employee_id
+    )
     or_terms = []
     if data.get("dni"):
         or_terms.append(Customer.dni == data["dni"])
@@ -67,16 +83,15 @@ def create_customer(
     if or_terms:
         dups = qdup.filter(or_(*or_terms)).all()
         if dups:
-            # Señales finas
             if any(c.dni == data.get("dni") and data.get("dni") is not None for c in dups) and \
                any(c.phone == phone_norm and phone_norm is not None for c in dups):
-                raise HTTPException(status_code=409, detail="DNI y teléfono ya están registrados en esta empresa.")
+                raise HTTPException(status_code=409, detail="DNI y teléfono ya están registrados para este empleado.")
             if any(c.dni == data.get("dni") and data.get("dni") is not None for c in dups):
-                raise HTTPException(status_code=409, detail="DNI ya registrado en esta empresa.")
+                raise HTTPException(status_code=409, detail="DNI ya registrado para este empleado.")
             if any(c.phone == phone_norm and phone_norm is not None for c in dups):
-                raise HTTPException(status_code=409, detail="Teléfono ya registrado en esta empresa.")
+                raise HTTPException(status_code=409, detail="Teléfono ya registrado para este empleado.")
             if any(c.email == data.get("email") and data.get("email") is not None for c in dups):
-                raise HTTPException(status_code=409, detail="Email ya registrado en esta empresa.")
+                raise HTTPException(status_code=409, detail="Email ya registrado para este empleado.")
 
     obj = Customer(**data)
     db.add(obj)
@@ -84,16 +99,27 @@ def create_customer(
         db.commit()
     except IntegrityError as e:
         db.rollback()
-        # Mapear nombres de constraints (cubriendo los que ya creamos y variantes antiguas)
+        # Mapear nombres de constraints por empleado
         constraint = getattr(getattr(e, "orig", None), "diag", None)
         cname = getattr(constraint, "constraint_name", "") if constraint else ""
+
+        # Nuevos únicos por empleado
+        if cname in {"ux_customers_employee_dni"}:
+            raise HTTPException(status_code=409, detail="DNI ya registrado para este empleado.")
+        if cname in {"ux_customers_employee_phone"}:
+            raise HTTPException(status_code=409, detail="Teléfono ya registrado para este empleado.")
+        if cname in {"ux_customers_employee_email"}:
+            raise HTTPException(status_code=409, detail="Email ya registrado para este empleado.")
+
+        # Compatibilidad hacia atrás (por si existe algún resto de constraints viejas)
         if cname in {"uq_customer_company_dni", "customers_company_dni_key", "customers_dni_key"}:
-            raise HTTPException(status_code=409, detail="DNI ya registrado en esta empresa.")
+            raise HTTPException(status_code=409, detail="DNI ya registrado.")
         if cname in {"uq_customer_company_phone", "customers_company_phone_key", "customers_phone_key"}:
-            raise HTTPException(status_code=409, detail="Teléfono ya registrado en esta empresa.")
+            raise HTTPException(status_code=409, detail="Teléfono ya registrado.")
         if cname in {"uq_customer_company_email", "customers_company_email_key", "customers_email_key"}:
-            raise HTTPException(status_code=409, detail="Email ya registrado en esta empresa.")
-        raise HTTPException(status_code=409, detail="Ya existe un cliente con DNI/telefono/email en esta empresa.")
+            raise HTTPException(status_code=409, detail="Email ya registrado.")
+
+        raise HTTPException(status_code=409, detail="Ya existe un cliente con DNI/teléfono/email para este empleado.")
     db.refresh(obj)
     return obj
 
@@ -107,6 +133,7 @@ def get_customer(
     current: Employee = Depends(get_current_user),
 ):
     obj = db.query(Customer).filter(Customer.id == customer_id).first()
+    # Seguridad por empresa
     if not obj or obj.company_id != current.company_id:
         _404()
     return obj
@@ -131,28 +158,43 @@ def update_customer(
     if "phone" in changes and changes["phone"] is not None:
         changes["phone"] = normalize_phone(changes["phone"])
 
-    # Validar duplicados solo si cambian esos campos
+    # Determinar employee destino para validación de unicidad.
+    # - Si sos admin/manager y el payload trae employee_id, validamos contra ese destino.
+    # - Si no, se valida contra el employee actual del registro.
+    target_employee_id = obj.employee_id
+    if _is_admin_or_manager(current) and "employee_id" in changes and changes["employee_id"]:
+        target_employee_id = int(changes["employee_id"])
+
+    # Validar duplicados por empleado destino SOLO si cambian esos campos o si cambia employee_id
     def _exists(field: str, value: Optional[str]) -> bool:
         if not value:
             return False
         return db.query(Customer).filter(
-            Customer.company_id == current.company_id,
+            Customer.employee_id == target_employee_id,
             getattr(Customer, field) == value,
             Customer.id != customer_id,
         ).first() is not None
 
     if "dni" in changes and changes["dni"] != obj.dni and _exists("dni", changes["dni"]):
-        raise HTTPException(status_code=409, detail="DNI ya registrado en esta empresa.")
+        raise HTTPException(status_code=409, detail="DNI ya registrado para ese empleado.")
     if "phone" in changes and changes["phone"] != obj.phone and _exists("phone", changes["phone"]):
-        raise HTTPException(status_code=409, detail="Teléfono ya registrado en esta empresa.")
+        raise HTTPException(status_code=409, detail="Teléfono ya registrado para ese empleado.")
     if "email" in changes and changes["email"] != obj.email and _exists("email", changes["email"]):
-        raise HTTPException(status_code=409, detail="Email ya registrado en esta empresa.")
+        raise HTTPException(status_code=409, detail="Email ya registrado para ese empleado.")
+
+    # Si solo cambia employee_id (y no cambió dni/phone/email) igual hay que validar que
+    # en el destino no exista un registro con mismos datos.
+    if ("employee_id" in changes and int(changes["employee_id"]) != obj.employee_id):
+        for fld in ("dni", "phone", "email"):
+            val = changes.get(fld, getattr(obj, fld))
+            if val and _exists(fld, val):
+                raise HTTPException(status_code=409, detail=f"{fld.upper()} ya registrado para ese empleado.")
 
     # Aplicar cambios permitidos
     for k, v in changes.items():
         setattr(obj, k, v)
 
-    # company_id SIEMPRE el del token (ignoramos si vino en body)
+    # company_id SIEMPRE el del token
     obj.company_id = current.company_id
 
     db.add(obj)
@@ -170,7 +212,11 @@ def get_customers_by_employee(
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
-    # 200 con [] si no hay resultados (más friendly para el front)
+    # Asegurar que el employee pertenece a la misma empresa
+    emp = db.query(Employee).filter(Employee.id == employee_id).first()
+    if not emp or emp.company_id != current.company_id:
+        _404()
+
     return db.query(Customer).filter(
         Customer.company_id == current.company_id,
         Customer.employee_id == employee_id

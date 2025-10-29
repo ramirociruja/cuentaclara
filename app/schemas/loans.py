@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
-from datetime import date
+from datetime import date, datetime
 from .installments import InstallmentOut
 
 class LoansBase(BaseModel):
@@ -9,7 +9,7 @@ class LoansBase(BaseModel):
     installments_count: int
     installment_amount: Optional[float] = None
     frequency: str                      # "weekly" | "monthly" (como ya usás)
-    start_date: Optional[date] = None
+    start_date: Optional[datetime] = None
     status: Optional[str] = None
     company_id: int
 
@@ -28,7 +28,7 @@ class LoansUpdate(BaseModel):
     installments_count: Optional[int] = None
     installment_amount: Optional[float] = None
     frequency: Optional[str] = None
-    start_date: Optional[date] = None
+    start_date: Optional[datetime] = None
     status: Optional[str] = None
     company_id: Optional[int] = None
 
@@ -44,10 +44,22 @@ class LoansOut(LoansBase):
 
     class Config:
         from_attributes = True  # pydantic v2 (equiv. a orm_mode=True)
+class LoanListItem(BaseModel):
+    id: int
+    amount: float
+    start_date: datetime
+    customer_name: str
+    customer_province: Optional[str] = None
 
+class LoansByDay(BaseModel):
+    date: date
+    amount: float
+    count: int
 class LoansSummaryResponse(BaseModel):
     count: int
     amount: float
+    by_day: List[LoansByDay] = []   # <- nuevo
+    customer_province: Optional[str] = None
 
 class LoanPaymentRequest(BaseModel):
     amount_paid: float

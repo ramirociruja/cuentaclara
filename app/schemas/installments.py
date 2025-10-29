@@ -1,7 +1,7 @@
 from typing_extensions import Literal
 from pydantic import BaseModel, Field
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, List
 
 
 PaymentType = Literal['cash', 'transfer', 'other']
@@ -13,7 +13,7 @@ class InstallmentBase(BaseModel):
 
 class InstallmentUpdate(BaseModel):
     amount: float | None = None
-    due_date: date | None = None
+    due_date: datetime | None = None
     status: str | None = None
     is_paid: bool | None = None
 
@@ -36,7 +36,8 @@ class InstallmentListOut(InstallmentOut):
     customer_name: Optional[str] = None
     debt_type: Optional[str] = None  # "loan" | "purchase"
     customer_id: Optional[int] = None            # 👈 NUEVO
-    customer_phone: Optional[str] = None         # 👈 NUEVO
+    customer_phone: Optional[str] = None 
+    customer_province: Optional[str] = None        # 👈 NUEVO
     
 class OverdueInstallmentOut(BaseModel):
     id: int
@@ -74,12 +75,24 @@ class InstallmentPaymentRequest(BaseModel):
     payment_type: Optional[PaymentType] = None   # NUEVO
     description: Optional[str] = None            # NUEVO
 
+class InstallmentsByDay(BaseModel):
+    date: date
+    due_amount: float  # monto de cuotas con due_date ese día (independiente de pago)
 class InstallmentSummaryOut(BaseModel):
+    total_amount: float
+    pending_amount: float
     pending_count: int
     paid_count: int
     overdue_count: int
-    total_amount: float
-    pending_amount: float
+    by_day: List[InstallmentsByDay] = []  # <- opcional para gráficos por día
+
+class InstallmentListItem(BaseModel):
+    id: int
+    number: Optional[int] = None
+    due_date: datetime
+    amount: float
+    paid_amount: float
+    customer_name: str
 
 class InstallmentPaymentResult(BaseModel):
     payment_id: int

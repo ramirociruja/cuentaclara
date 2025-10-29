@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/screens/overdue_screen.dart';
+import 'package:frontend/screens/weekly_summary_screen.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:frontend/services/api_service.dart';
@@ -284,66 +285,104 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Reemplazá tu método _executiveSummaryCard() por este:
+  // Reemplazá tu método _executiveSummaryCard() por este:
+  // Reemplazá tu método _executiveSummaryCard() por este:
   Widget _executiveSummaryCard() {
     final double goal = weeklyDueAmount;
     final double achieved = weeklyCollected;
     final double progress = goal == 0 ? 0 : (achieved / goal).clamp(0, 1);
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Header
-            Row(
-              children: [
-                const Icon(
-                  Icons.analytics_outlined,
-                  color: primaryColor,
-                  size: 20,
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => WeeklySummaryScreen(
+                  initialFrom: _monday,
+                  initialTo: _sunday,
+                  initialProvince: null,
                 ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Resumen semanal',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: primaryColor,
+          ),
+        );
+      },
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              // Header (sin botón)
+              Row(
+                children: [
+                  const Icon(Icons.insights, color: primaryColor),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Resumen semanal',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: primaryColor,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _weekChip(
-                  '${_fmtDM(_monday)} – ${_fmtDM(_sunday)}',
-                ), // <-- sin año
-              ],
-            ),
-            const SizedBox(height: 12),
+                  const SizedBox(width: 8),
+                  _weekChip('${_fmtDM(_monday)} – ${_fmtDM(_sunday)}'),
+                ],
+              ),
 
-            // Cuerpo: IZQ métricas, DER gráfico
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _kpiLine(title: 'A cobrar', value: goal),
-                      const SizedBox(height: 8),
-                      _kpiLine(title: 'Cobrado', value: achieved),
-                    ],
+              const SizedBox(height: 12),
+
+              // Cuerpo
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _kpiLine(title: 'A cobrar', value: goal),
+                        const SizedBox(height: 8),
+                        _kpiLine(title: 'Cobrado', value: achieved),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                _progressDonut(progress: progress), // más pequeño (ver abajo)
-              ],
-            ),
-          ],
+                  const SizedBox(width: 12),
+                  _progressDonut(progress: progress),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // Footer sutil y breve
+              Row(
+                children: const [
+                  Icon(
+                    Icons.touch_app_outlined,
+                    size: 16,
+                    color: Colors.black54,
+                  ),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Ver resumen detallado',
+                      style: TextStyle(color: Colors.black54, fontSize: 12),
+                    ),
+                  ),
+                  Icon(
+                    Icons.arrow_forward_ios,
+                    size: 14,
+                    color: Colors.black45,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -483,7 +522,7 @@ class _HomeScreenState extends State<HomeScreen> {
             // 3) Nuevo préstamo / venta
             _actionButton(
               icon: Icons.add_shopping_cart,
-              label: 'Nuevo préstamo',
+              label: 'Nuevo crédito',
               bg: Color(0xFF7E57C2),
               fg: Colors.white,
               onTap:

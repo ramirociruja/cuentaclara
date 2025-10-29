@@ -26,6 +26,9 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
   bool _allocLoading = false;
   List<Map<String, dynamic>> _allocs = const [];
 
+  // NEW: evitar doble tap en "Anular"
+  bool _voiding = false;
+
   @override
   void initState() {
     super.initState();
@@ -87,14 +90,27 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
   }
 
   // ======= utils =======
-  String _fmtDate(dynamic v) {
-    if (v == null) return '-';
-    try {
-      final dt = v is DateTime ? v : DateTime.parse(v.toString());
-      return _df.format(dt);
-    } catch (_) {
-      return v.toString();
+  DateTime? _parseAny(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is int) {
+      // si es epoch: 13 dígitos = ms, 10 dígitos = seg (asumimos UTC)
+      return v > 9999999999
+          ? DateTime.fromMillisecondsSinceEpoch(v, isUtc: true)
+          : DateTime.fromMillisecondsSinceEpoch(v * 1000, isUtc: true);
     }
+    try {
+      return DateTime.parse(v.toString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _fmtDate(dynamic v) {
+    final dt = _parseAny(v);
+    if (dt == null) return '-';
+    final local = dt.isUtc ? dt.toLocal() : dt;
+    return _df.format(local);
   }
 
   String _fmtMoney(dynamic v) {
@@ -122,6 +138,8 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
 
   // ======= acciones =======
   Future<void> _confirmAndVoid() async {
+    if (_voiding) return; // ya procesando
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder:
@@ -144,6 +162,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
     );
     if (confirmed != true) return;
 
+    setState(() => _voiding = true);
     try {
       final pid = (_p['id'] as num).toInt();
       await ApiService.voidPayment(pid);
@@ -157,6 +176,8 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error al anular: $e')));
+    } finally {
+      if (mounted) setState(() => _voiding = false);
     }
   }
 
@@ -203,16 +224,27 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
         actions: [
           PopupMenuButton<String>(
             onSelected: (v) {
+              if (_voiding) return; // evita acción mientras anula
               if (v == 'void') _confirmAndVoid();
             },
             itemBuilder:
-                (_) => const [
+                (_) => [
                   PopupMenuItem(
                     value: 'void',
+                    enabled: !_voiding, // <-- desactivar mientras procesa
                     child: ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.cancel_outlined),
-                      title: Text('Anular pago'),
+                      leading:
+                          _voiding
+                              ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Icon(Icons.cancel_outlined),
+                      title: Text(_voiding ? 'Anulando…' : 'Anular pago'),
                     ),
                   ),
                 ],
@@ -269,7 +301,7 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
       padding: const EdgeInsets.all(12),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12), // reemplazo
         border: Border.all(color: color),
         borderRadius: BorderRadius.circular(12),
       ),
@@ -291,7 +323,8 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
   /// Card principal: **Pago + Cliente** juntos
   Widget _mainCard() {
     final amount = _fmtMoney(_p['amount']);
-    final date = _fmtDate(_p['payment_date']);
+    final date = _fmtDate(_p['payment_date'] ?? _p['created_at']);
+
     final pid = _p['id']?.toString() ?? '-';
     final method = _methodLabel(_p['payment_type']);
     final desc =
@@ -498,9 +531,11 @@ class _PaymentDetailScreenState extends State<PaymentDetailScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
+        color: Colors.white.withValues(alpha: 0.15), // reemplazo
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withOpacity(0.35)),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.35),
+        ), // reemplazo
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

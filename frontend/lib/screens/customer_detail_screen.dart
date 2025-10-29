@@ -597,7 +597,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
               ),
             ),
             const Spacer(),
-            const Badge(label: Text(''), backgroundColor: primaryColor),
             Badge(
               label: Text(payments.length.toString()),
               backgroundColor: primaryColor,

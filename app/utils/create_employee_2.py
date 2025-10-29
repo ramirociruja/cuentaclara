@@ -12,9 +12,9 @@ hashed_password = pwd_context.hash("123456")  # Cambiá por tu contraseña
 new_employee = Employee(
     name="Admin",
     role="admin",
-    email="admin2@example.com",
+    email="admin3@example.com",
     password=hashed_password,
-    company_id=3  # Usá un ID de empresa válido en tu DB
+    company_id=1  # Usá un ID de empresa válido en tu DB
 )
 
 db.add(new_employee)

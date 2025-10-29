@@ -6,6 +6,7 @@ import 'package:frontend/models/loan.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:dropdown_search/dropdown_search.dart';
 import 'package:frontend/utils/utils.dart'; // shareReceiptByPaymentId
+import 'package:frontend/shared/status.dart';
 
 class RegisterPaymentScreen extends StatefulWidget {
   const RegisterPaymentScreen({super.key});
@@ -111,12 +112,10 @@ class _RegisterPaymentScreenState extends State<RegisterPaymentScreen> {
 
     // Filtrar préstamos: solo los no pagados y con saldo > 0
     final activeLoans =
-        loans
-            .where(
-              (loan) =>
-                  loan.status.toLowerCase() != "paid" && loan.totalDue > 0,
-            )
-            .toList();
+        loans.where((loan) {
+          final code = normalizeLoanStatusCode(loan.status);
+          return !loanIsClosed(code) && loan.totalDue > 0;
+        }).toList();
 
     // Ordenar por ID ascendente
     activeLoans.sort((a, b) => a.id.compareTo(b.id));

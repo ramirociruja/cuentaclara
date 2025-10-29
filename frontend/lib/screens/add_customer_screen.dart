@@ -57,9 +57,10 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   ];
 
   String? _validateEmail(String? value) {
-    if (value == null || value.isEmpty) return 'Ingrese el correo electrónico';
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return null; // <- ahora NO obligatorio
     final emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+$');
-    if (!emailRegex.hasMatch(value)) return 'Ingrese un correo válido';
+    if (!emailRegex.hasMatch(v)) return 'Ingrese un correo válido';
     return null;
   }
 
@@ -397,7 +398,7 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
                       validator:
                           (v) =>
                               (v == null || v.trim().isEmpty)
-                                  ? 'Ingrese el nombre'
+                                  ? 'Ingrese el apellido'
                                   : null,
                     ),
                     _buildFormField(

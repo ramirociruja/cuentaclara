@@ -9,7 +9,7 @@ class CustomerBase(BaseModel):
     dni: Optional[str] = Field(None, min_length=7)
     address: str
     phone: str
-    email: str
+    email: Optional[str] = None 
     province: Optional[str] = None
 
     # 👇 Para P0-B: estos campos NO deben ser obligatorios en la entrada
@@ -25,10 +25,9 @@ class CustomerBase(BaseModel):
 
     @field_validator('email')
     @classmethod
-    def email_must_be_valid(cls, v: str) -> str:
-        if '@' not in v or '.' not in v:
-            raise ValueError('Correo electrónico no es válido')
-        return v
+    def empty_email_to_none(cls, v):
+        v = (v or "").strip()
+        return v if v else None
 
 # ---------- Crear ----------
 class CustomerCreate(CustomerBase):
@@ -53,13 +52,6 @@ class CustomerUpdate(BaseModel):
             raise ValueError('DNI debe contener solo caracteres alfanuméricos')
         return v.upper() if v is not None else v
 
-    @field_validator('email')
-    @classmethod
-    def email_must_be_valid(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and ('@' not in v or '.' not in v):
-            raise ValueError('Correo electrónico no es válido')
-        return v
-
 # ---------- Salida ----------
 class CustomerOut(BaseModel):
     id: int
@@ -68,7 +60,7 @@ class CustomerOut(BaseModel):
     dni: Optional[str] = None
     address: str
     phone: str
-    email: str
+    email: Optional[str] = None
     province: Optional[str] = None
     employee_id: Optional[int] = None
     company_id: int

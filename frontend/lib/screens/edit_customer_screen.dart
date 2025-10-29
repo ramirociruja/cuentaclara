@@ -67,7 +67,7 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
     dniController.text = widget.customer.dni;
     addressController.text = widget.customer.address;
     phoneController.text = widget.customer.phone;
-    emailController.text = widget.customer.email;
+    emailController.text = widget.customer.email ?? '';
     selectedProvince = widget.customer.province;
     provinceController.text = selectedProvince ?? '';
   }
@@ -85,9 +85,10 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
   }
 
   String? _validateEmail(String? value) {
-    if (value == null || value.isEmpty) return 'Ingrese el correo electrónico';
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return null; // ahora NO obligatorio
     final emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+$');
-    if (!emailRegex.hasMatch(value)) return 'Ingrese un correo válido';
+    if (!emailRegex.hasMatch(v)) return 'Ingrese un correo válido';
     return null;
   }
 
@@ -108,6 +109,8 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
 
     setState(() => isLoading = true);
     try {
+      final emailText = emailController.text.trim();
+
       final updatedCustomer = Customer(
         id: widget.customer.id,
         firstName: firstNameController.text.trim(),
@@ -115,7 +118,7 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
         dni: dniController.text.trim(),
         address: addressController.text.trim(),
         phone: phoneController.text.trim(),
-        email: emailController.text.trim(),
+        email: emailText.isEmpty ? null : emailText,
         province: selectedProvince ?? '',
         companyId: widget.customer.companyId,
         employeeId: widget.customer.employeeId,
@@ -398,7 +401,7 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
                       validator:
                           (v) =>
                               (v == null || v.trim().isEmpty)
-                                  ? 'Ingrese el nombre'
+                                  ? 'Ingrese el apellido'
                                   : null,
                     ),
                     _buildFormField(
@@ -515,8 +518,9 @@ class _EditCustomerScreenState extends State<EditCustomerScreen> {
               style: FilledButton.styleFrom(
                 backgroundColor: primaryColor,
                 foregroundColor: Colors.white,
-                disabledBackgroundColor: primaryColor.withOpacity(0.55),
-                disabledForegroundColor: Colors.white.withOpacity(0.95),
+                // Reemplazo deprecado:
+                disabledBackgroundColor: primaryColor.withValues(alpha: 0.55),
+                disabledForegroundColor: Colors.white.withValues(alpha: 0.95),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),

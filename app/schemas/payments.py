@@ -1,6 +1,6 @@
 from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional, Literal
+from datetime import datetime, date
+from typing import Optional, Literal, List
 
 PaymentType = Literal['cash', 'transfer', 'other']
 
@@ -17,6 +17,9 @@ class PaymentCreate(PaymentBase):
 class PaymentOut(PaymentBase):
     id: int
     payment_date: datetime
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    customer_province: Optional[str] = None
     class Config:
         from_attributes = True  # pydantic v2 (equiv. orm_mode=True)
 
@@ -39,8 +42,13 @@ class PaymentDetailOut(PaymentOut):
     installments_pending: Optional[int] = None     # impagas con due_date >= hoy
 
 
+class PaymentsByDay(BaseModel):
+    date: date
+    amount: float
+
 class PaymentsSummaryResponse(BaseModel):
     total_amount: float
+    by_day: List[PaymentsByDay] = []   # <- nuevo
 
 # 👇 NUEVO: para editar método/nota (sin tocar monto)
 class PaymentUpdate(BaseModel):

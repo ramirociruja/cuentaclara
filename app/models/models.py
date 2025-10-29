@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, text
+from sqlalchemy import Column, Index, Integer, String, Float, ForeignKey, DateTime, Boolean, text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database.db import Base
@@ -50,9 +50,9 @@ class Customer(Base):
 
     __table_args__ = (
         # Unicidad por empresa (en vez de unique=True global)
-        UniqueConstraint("company_id", "dni",   name="uq_customer_company_dni"),
-        UniqueConstraint("company_id", "phone", name="uq_customer_company_phone"),
-        UniqueConstraint("company_id", "email", name="uq_customer_company_email"),
+        Index('ux_customers_employee_dni', 'employee_id', 'dni', unique=True),
+        Index('ux_customers_employee_phone', 'employee_id', 'phone', unique=True),
+        Index('ux_customers_employee_email', 'employee_id', 'email', unique=True),
     )
 
    
@@ -66,7 +66,12 @@ class Employee(Base):
     phone = Column(String, unique=True, nullable=True)
     email = Column(String, unique=True, nullable=False, index=True)  # Campo para email
     password = Column(String, nullable=False)  # Campo para la contraseña cifrada
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
 
     company_id = Column(Integer, ForeignKey('companies.id'))
     token_version = Column(Integer, nullable=False, default=0)
@@ -87,7 +92,11 @@ class Loan(Base):
     installments_count = Column(Integer, nullable=False)
     installment_amount = Column(Float, nullable=False)
     frequency = Column(String, nullable=False)  # "weekly" or "monthly"
-    start_date = Column(DateTime, default=datetime.utcnow)
+    start_date = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
     status = Column(String, default=LoanStatus.ACTIVE.value)  # "active", "paid", "defaulted"
     description = Column(String, nullable=True)
     collection_day = Column(Integer, nullable=True)  # 1..7 (ISO: lunes=1)
@@ -111,7 +120,11 @@ class Purchase(Base):
     installments_count = Column(Integer, nullable=False)
     installment_amount = Column(Float, nullable=False)
     frequency = Column(String, nullable=False)  # "weekly" or "monthly"
-    start_date = Column(DateTime, default=datetime.utcnow)
+    start_date = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
     status = Column(String, default=LoanStatus.ACTIVE.value)  # "active", "paid", "defaulted"
     
     company_id = Column(Integer, ForeignKey('companies.id'))
@@ -129,11 +142,15 @@ class Payment(Base):
     loan_id = Column(Integer, ForeignKey("loans.id"), nullable=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=True)
     amount = Column(Float, nullable=False)
-    payment_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    payment_date = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
 
     # Anulación de pago
     is_voided = Column(Boolean, default=False)
-    voided_at = Column(DateTime, nullable=True)
+    voided_at = Column(DateTime(timezone=True), nullable=True)
     void_reason = Column(String, nullable=True)
     voided_by_employee_id = Column(Integer, ForeignKey('employees.id'), nullable=True)
 
@@ -154,7 +171,7 @@ class Installment(Base):
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=True)
 
     number = Column(Integer, nullable=False)  # Cuota 1, 2, 3...
-    due_date = Column(DateTime, nullable=False)
+    due_date = Column(DateTime(timezone=True), nullable=False)
     amount = Column(Float, nullable=False)
     paid_amount = Column(Float, default=0)
     is_paid = Column(Boolean, default=False)
@@ -194,8 +211,17 @@ class Company(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
     service_status = Column(String, nullable=False, default="active", index=True)
     license_expires_at = Column(DateTime(timezone=True), nullable=True)
     suspended_at = Column(DateTime(timezone=True), nullable=True)
@@ -228,7 +254,11 @@ class PaymentAllocation(Base):
     # monto de este pago aplicado a ESA cuota
     amount_applied = Column(Float, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )   
 
     # relaciones
     payment = relationship("Payment", backref="allocations")

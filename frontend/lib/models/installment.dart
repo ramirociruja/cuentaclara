@@ -9,6 +9,7 @@ class Installment {
   final bool isOverdue;
   final int number;
   final double paidAmount;
+  final int? loanId; // 👈 NUEVO (opcional)
 
   Installment({
     required this.id,
@@ -19,6 +20,7 @@ class Installment {
     required this.isOverdue,
     required this.number,
     required this.paidAmount,
+    this.loanId, // 👈
   });
 
   // ---- helpers seguros ----
@@ -42,6 +44,18 @@ class Installment {
         (json['is_overdue'] as bool?) ??
         (toCanonicalInstallmentStatus(raw) == 'overdue');
 
+    int? _parseLoanId(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toInt();
+      if (v is String) return int.tryParse(v);
+      if (v is Map<String, dynamic>) {
+        final cand = v['id'] ?? v['loan_id'];
+        if (cand is num) return cand.toInt();
+        if (cand is String) return int.tryParse(cand);
+      }
+      return null;
+    }
+
     return Installment(
       id: (json['id'] as num?)?.toInt() ?? 0,
       amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
@@ -51,6 +65,7 @@ class Installment {
       isOverdue: isOverdue,
       number: (json['number'] as num?)?.toInt() ?? 0,
       paidAmount: (json['paid_amount'] as num?)?.toDouble() ?? 0.0,
+      loanId: _parseLoanId(json['loan_id'] ?? json['loan']),
     );
   }
 
@@ -64,6 +79,7 @@ class Installment {
       'is_overdue': isOverdue,
       'number': number,
       'paid_amount': paidAmount,
+      if (loanId != null) 'loan_id': loanId, // 👈 opcional
     };
   }
 }

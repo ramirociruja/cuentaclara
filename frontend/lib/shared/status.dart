@@ -192,3 +192,85 @@ Color loanStatusColor(String statusLabelEs) {
       return primary;
   }
 }
+
+// ===== CÓDIGOS CANÓNICOS (para lógica) =====
+enum LoanStatusCode { active, delinquent, paid, refinanced, canceled, unknown }
+
+enum InstallmentStatusCode {
+  pending,
+  partial,
+  paid,
+  overdue,
+  canceled,
+  refinanced,
+  unknown,
+}
+
+// Loan → code
+LoanStatusCode normalizeLoanStatusCode(dynamic raw) {
+  final s = (raw ?? '').toString().trim().toLowerCase();
+  if (s.isEmpty) return LoanStatusCode.unknown;
+
+  const paid = {'paid', 'pagado', 'pagada', 'completed', 'complete', 'settled'};
+  const canceled = {
+    'canceled',
+    'cancelled',
+    'cancelado',
+    'cancelada',
+    'void',
+    'anulado',
+    'anulada',
+  };
+  const refinanced = {'refinanced', 'refinanciado', 'refinanciada'};
+  const delinquent = {
+    'defaulted',
+    'incumplido',
+    'en mora',
+    'overdue',
+    'vencido',
+    'vencida',
+    'delinquent',
+  };
+  const active = {'active', 'activo', 'in_progress', 'en curso'};
+
+  if (paid.contains(s)) return LoanStatusCode.paid;
+  if (canceled.contains(s)) return LoanStatusCode.canceled;
+  if (refinanced.contains(s)) return LoanStatusCode.refinanced;
+  if (delinquent.contains(s)) return LoanStatusCode.delinquent;
+  if (active.contains(s)) return LoanStatusCode.active;
+  return LoanStatusCode.unknown;
+}
+
+// Installment → code
+InstallmentStatusCode normalizeInstallmentStatusCode(dynamic raw) {
+  final s = (raw ?? '').toString().trim().toLowerCase();
+  if (s.isEmpty) return InstallmentStatusCode.pending;
+
+  const pending = {'pending', 'pendiente'};
+  const partial = {
+    'partial',
+    'partially paid',
+    'parcial',
+    'parcialmente pagada',
+  };
+  const paid = {'paid', 'pagada', 'pagado'};
+  const overdue = {'overdue', 'vencida', 'vencido'};
+  const canceled = {'canceled', 'cancelled', 'cancelada', 'cancelado'};
+  const refinanced = {'refinanced', 'refinanciada', 'refinanciado'};
+
+  if (pending.contains(s)) return InstallmentStatusCode.pending;
+  if (partial.contains(s)) return InstallmentStatusCode.partial;
+  if (paid.contains(s)) return InstallmentStatusCode.paid;
+  if (overdue.contains(s)) return InstallmentStatusCode.overdue;
+  if (canceled.contains(s)) return InstallmentStatusCode.canceled;
+  if (refinanced.contains(s)) return InstallmentStatusCode.refinanced;
+  return InstallmentStatusCode.unknown;
+}
+
+bool loanIsClosed(LoanStatusCode c) =>
+    c == LoanStatusCode.paid ||
+    c == LoanStatusCode.canceled ||
+    c == LoanStatusCode.refinanced;
+
+bool installmentIsPaidish(InstallmentStatusCode c) =>
+    c == InstallmentStatusCode.paid || c == InstallmentStatusCode.canceled;
