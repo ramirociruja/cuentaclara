@@ -1,0 +1,105 @@
+workflows:
+  ios_prepare:
+    name: iOS Prepare (no signing)
+    working_directory: frontend
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.cuentaclara.app
+        BUILD_NAME: 1.0.0
+        BUILD_NUMBER: 1
+        API_BASE_URL: https://cuentaclara-production.up.railway.app
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
+    scripts:
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
+          flutter pub get
+      # (Opcional) Si querés forzar actualización de repos de pods
+      - name: Pod install (iOS)
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
+      - name: Build iOS (no code signing)
+        script: |
+          flutter build ios --release --no-codesign \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
+    artifacts:
+      - build/ios/iphoneos/*.app
+      - build/ios/archive/*.xcarchive
+    publishing:
+      email:
+        recipients:
+          - your@email.com
+        notify:
+          success: true
+          failure: true
+
+  ios_testflight:
+    name: iOS Release → TestFlight
+    working_directory: frontend
+    max_build_duration: 90
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.cuentaclara.app
+        BUILD_NAME: 1.0.0
+        BUILD_NUMBER: 1
+        API_BASE_URL: https://cuentaclara-production.up.railway.app
+      ios_signing:
+        distribution_type: app-store
+        bundle_identifier: $BUNDLE_ID
+        app_store_connect:
+          api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+          key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+          issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
+    scripts:
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Prepare automatic signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build IPA (signed)
+        script: |
+          flutter build ipa --release \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+    publishing:
+      app_store_connect:
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
+      email:
+        recipients:
+          - your@email.com
+        notify:
+          success: true
+          failure: true
