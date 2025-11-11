@@ -23,7 +23,6 @@ workflows:
         script: |
           flutter clean
           flutter pub get
-      # (Opcional) Si querés forzar actualización de repos de pods
       - name: Pod install (iOS)
         script: |
           cd ios
@@ -38,13 +37,6 @@ workflows:
     artifacts:
       - build/ios/iphoneos/*.app
       - build/ios/archive/*.xcarchive
-    publishing:
-      email:
-        recipients:
-          - your@email.com
-        notify:
-          success: true
-          failure: true
 
   ios_testflight:
     name: iOS Release → TestFlight
@@ -60,12 +52,8 @@ workflows:
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
       ios_signing:
-        distribution_type: app-store
-        bundle_identifier: $BUNDLE_ID
-        app_store_connect:
-          api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-          key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-          issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        distribution_type: app_store        # 👈 guion bajo
+        bundle_identifier: $BUNDLE_ID       # 👈 correcto
     cache:
       cache_paths:
         - ~/.pub-cache
@@ -94,12 +82,11 @@ workflows:
       - build/ios/archive/*.xcarchive
     publishing:
       app_store_connect:
+        # Opción A: usar variables de entorno
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
         beta_groups:
           - Internal Testers
-      email:
-        recipients:
-          - your@email.com
-        notify:
-          success: true
-          failure: true
+        # Opción B (alternativa): heredarlo desde Integrations y omitir api_key/key_id/issuer_id
