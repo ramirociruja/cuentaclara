@@ -1,20 +1,29 @@
-# ios/Podfile
 platform :ios, '13.0'
 
-# Mantener esta línea para fluter
-install! 'cocoapods', :disable_input_output_paths => true
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+# 👉 Carga las utilidades de Flutter (define flutter_install_all_ios_pods, etc.)
+require File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+
+flutter_ios_podfile_setup
 
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  # 👉 Instala todos los pods generados por Flutter
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
+  # 👉 Ajustes adicionales de build que Flutter necesita
   installer.pods_project.targets.each do |target|
-    target.build_configurations.each do |config|
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
-    end
+    flutter_additional_ios_build_settings(target)
   end
 end
