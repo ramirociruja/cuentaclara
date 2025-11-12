@@ -30,7 +30,6 @@ workflows:
           cd ..
       - name: Build iOS (no code signing)
         script: |
-          # Compila sólo el .app para validar el proyecto en iOS
           flutter build ios --release --no-codesign \
             --build-name=$BUILD_NAME \
             --build-number=$BUILD_NUMBER \
@@ -52,16 +51,17 @@ workflows:
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
         TEAM_ID: XQJ843FZ7Q
-      # Si usás "Integrations" en Codemagic y ya conectaste App Store Connect,
-      # podés omitir las 3 variables de abajo y/o usar un "group" (p. ej. appstore_credentials)
-      # groups:
-      #   - appstore_credentials
+      # Si no usás Integrations, asegurate de tener en Environment variables:
+      # APP_STORE_CONNECT_PRIVATE_KEY  (PEGAR el .p8 completo con BEGIN/END)
+      # APP_STORE_CONNECT_KEY_IDENTIFIER
+      # APP_STORE_CONNECT_ISSUER_ID
     cache:
       cache_paths:
         - ~/.pub-cache
         - ~/Library/Caches/CocoaPods
         - ios/Pods
         - build
+
     scripts:
       - name: Flutter clean & pub get
         script: |
@@ -76,30 +76,67 @@ workflows:
 
       - name: Fetch signing files (App Store Connect)
         script: |
-          # Requiere variables en Environment:
-          # APP_STORE_CONNECT_PRIVATE_KEY (contenido completo .p8 con BEGIN/END)
-          # APP_STORE_CONNECT_KEY_IDENTIFIER (Key ID)
-          # APP_STORE_CONNECT_ISSUER_ID (Issuer ID - UUID)
-
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
           keychain add-certificates
-
-          # Aplica los perfiles bajados al proyecto (ajusta provisioning por target/config)
           xcode-project use-profiles --project ios/Runner.xcodeproj --scheme Runner
 
           echo "Perfiles descargados:"
           ls -la ~/Library/MobileDevice/Provisioning\ Profiles || true
 
+      - name: Create export_options.plist (App Store)
+        script: |
+          # Detecta el primer .mobileprovision y extrae el Name del perfil
+          PROF_PATH="$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -n 1)"
+          if [ -z "$PROF_PATH" ]; then
+            echo "No provisioning profiles found after fetch-signing-files"
+            exit 1
+          fi
+
+          PROFILE_NAME="$(security cms -D -i "$PROF_PATH" | /usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin)"
+          echo "Usando provisioning profile: $PROFILE_NAME"
+
+          cat > /Users/builder/export_options.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>destination</key>
+            <string>export</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>__BUNDLE_ID__</key>
+              <string>__PROFILE_NAME__</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+          # Sustituye placeholders por valores reales
+          /usr/bin/sed -i "" "s#__BUNDLE_ID__#${BUNDLE_ID}#g" /Users/builder/export_options.plist
+          /usr/bin/sed -i "" "s#__PROFILE_NAME__#${PROFILE_NAME}#g" /Users/builder/export_options.plist
+
+          echo "export_options.plist generado en /Users/builder/export_options.plist:"
+          cat /Users/builder/export_options.plist
+
       - name: Build & Sign IPA
         script: |
-          # Versión actual del CLI: sin --archive-method ni --team-id
+          # Usar el export_options.plist recién creado
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+            --scheme Runner \
+            --export-options-plist /Users/builder/export_options.plist
 
       - name: Imprimir info IPA (opcional)
         script: |
@@ -111,7 +148,6 @@ workflows:
 
     publishing:
       app_store_connect:
-        # Usá estas variables si NO heredás credenciales desde "Integrations"
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
