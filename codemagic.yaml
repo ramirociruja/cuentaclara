@@ -1,4 +1,43 @@
 workflows:
+  ios_prepare:
+    name: iOS Prepare (no signing)
+    working_directory: frontend
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.cuentaclara.app
+        BUILD_NAME: 1.0.0
+        BUILD_NUMBER: 1
+        API_BASE_URL: https://cuentaclara-production.up.railway.app
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
+    scripts:
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Install pods (iOS)
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
+      - name: Build iOS (no code signing)
+        script: |
+          # Compila sólo el .app para validar el proyecto en iOS
+          flutter build ios --release --no-codesign \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
+    artifacts:
+      - build/ios/iphoneos/*.app
+
   ios_testflight:
     name: iOS Release → TestFlight (signed)
     working_directory: frontend
@@ -13,17 +52,18 @@ workflows:
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
         TEAM_ID: XQJ843FZ7Q
-      groups:
-        - appstore_credentials  # si tenés este grupo en Codemagic
+      # Si usás "Integrations" en Codemagic y ya conectaste App Store Connect,
+      # podés omitir las 3 variables de abajo y/o usar un "group" (p. ej. appstore_credentials)
+      # groups:
+      #   - appstore_credentials
     cache:
       cache_paths:
         - ~/.pub-cache
         - ~/Library/Caches/CocoaPods
         - ios/Pods
         - build
-
     scripts:
-      - name: Flutter clean & deps
+      - name: Flutter clean & pub get
         script: |
           flutter clean
           flutter pub get
@@ -34,22 +74,36 @@ workflows:
           pod install --repo-update
           cd ..
 
-      - name: Fetch signing files
+      - name: Fetch signing files (App Store Connect)
         script: |
+          # Requiere variables en Environment:
+          # APP_STORE_CONNECT_PRIVATE_KEY (contenido completo .p8 con BEGIN/END)
+          # APP_STORE_CONNECT_KEY_IDENTIFIER (Key ID)
+          # APP_STORE_CONNECT_ISSUER_ID (Issuer ID - UUID)
+
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
           keychain add-certificates
+
+          # Aplica los perfiles bajados al proyecto (ajusta provisioning por target/config)
           xcode-project use-profiles --project ios/Runner.xcodeproj --scheme Runner
 
-      - name: Build IPA
+          echo "Perfiles descargados:"
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles || true
+
+      - name: Build & Sign IPA
         script: |
-          # versión actual soporta sin --archive-method ni --team-id
+          # Versión actual del CLI: sin --archive-method ni --team-id
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
             --scheme Runner
+
+      - name: Imprimir info IPA (opcional)
+        script: |
+          xcode-project ipa-info build/ios/ipa/*.ipa || true
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -57,7 +111,10 @@ workflows:
 
     publishing:
       app_store_connect:
+        # Usá estas variables si NO heredás credenciales desde "Integrations"
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
+        # beta_groups:
+        #   - Internal Testers
