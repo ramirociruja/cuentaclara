@@ -1,5 +1,4 @@
 platform :ios, '13.0'
-
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -8,8 +7,19 @@ project 'Runner', {
   'Release' => :release,
 }
 
-# 👉 Carga las utilidades de Flutter (define flutter_install_all_ios_pods, etc.)
-require File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+def flutter_root
+  generated_xcconfig = File.expand_path(File.join('Flutter', 'Generated.xcconfig'), __dir__)
+  unless File.exist?(generated_xcconfig)
+    raise "Generated.xcconfig must exist. Run 'flutter pub get' in the project root, then re-run the build."
+  end
+  File.foreach(generated_xcconfig) do |line|
+    match = line.match(/FLUTTER_ROOT\=(.*)/)
+    return match[1].strip if match
+  end
+  raise "FLUTTER_ROOT not found in Generated.xcconfig."
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
 
 flutter_ios_podfile_setup
 
@@ -17,13 +27,9 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # 👉 Instala todos los pods generados por Flutter
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 post_install do |installer|
-  # 👉 Ajustes adicionales de build que Flutter necesita
-  installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
-  end
+  flutter_additional_ios_build_settings(installer)
 end
