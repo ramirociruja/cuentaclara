@@ -52,7 +52,7 @@ workflows:
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
       groups:
-        - app_store_connect   # 👈 grupo con las 3 credenciales del Apple API Key (.p8, Key ID, Issuer ID)
+        - app_store_connect   # Debe contener: APP_STORE_CONNECT_PRIVATE_KEY / KEY_IDENTIFIER / ISSUER_ID
     cache:
       cache_paths:
         - ~/.pub-cache
@@ -65,27 +65,38 @@ workflows:
           flutter clean
           flutter pub get
 
+      - name: Pod install (iOS)
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
+
       - name: Prepare automatic signing (App Store Connect)
         script: |
-          # 1) Inicializa el llavero de certificados
+          # 1) Keychain para certificados
           keychain initialize
 
-          # 2) Descarga/crea perfiles y certificados del Apple Developer Portal
+          # 2) Descargar/crear perfiles y certificados (App Store)
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
 
-          # 3) Agrega los certificados al keychain
+          # 3) Importar certificados al keychain
           keychain add-certificates
 
-          # 4) Aplica automáticamente los perfiles descargados al proyecto Xcode
+          # 4) Aplicar perfiles al proyecto Xcode (desactiva auto-signing y setea el provisioning profile correcto)
           xcode-project use-profiles
 
-      - name: Build IPA (signed)
+      - name: Build (no codesign) + Package & Sign IPA
         script: |
-          # 5) Compila y exporta IPA firmado (usa los perfiles aplicados)
-          flutter build ipa --release \
+          # 5) Construir el Runner sin firmar (Flutter)
+          flutter build ios --release --no-codesign \
             --build-name=$BUILD_NAME \
             --build-number=$BUILD_NUMBER \
             --dart-define=API_BASE_URL=$API_BASE_URL
+
+          # 6) Empaquetar y firmar IPA usando los perfiles ya aplicados
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -96,6 +107,5 @@ workflows:
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
-        # opcional: definir grupos de testers
         # beta_groups:
         #   - Internal Testers
