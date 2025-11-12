@@ -51,9 +51,8 @@ workflows:
         BUILD_NAME: 1.0.0
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
-      # Si tenés las 3 credenciales como variables sueltas, no hace falta "groups"
-      # groups:
-      #   - app_store_connect
+      groups:
+        - app_store_connect   # 👈 grupo con las 3 credenciales del Apple API Key (.p8, Key ID, Issuer ID)
     cache:
       cache_paths:
         - ~/.pub-cache
@@ -68,18 +67,21 @@ workflows:
 
       - name: Prepare automatic signing (App Store Connect)
         script: |
-          # 1) Inicializa y agrega los certificados al llavero
+          # 1) Inicializa el llavero de certificados
           keychain initialize
+
+          # 2) Descarga/crea perfiles y certificados del Apple Developer Portal
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+
+          # 3) Agrega los certificados al keychain
           keychain add-certificates
 
-          # 2) Aplica los perfiles descargados al proyecto Xcode
-          #    (esto deshabilita el auto-signing y asigna el provisioning profile correcto)
-          xcode-project use-profiles --project ios/Runner.xcodeproj --scheme Runner --bundle-id "$BUNDLE_ID"
+          # 4) Aplica automáticamente los perfiles descargados al proyecto Xcode
+          xcode-project use-profiles
 
       - name: Build IPA (signed)
         script: |
-          # 3) Compila y exporta IPA firmado (Flutter usa xcodebuild por debajo)
+          # 5) Compila y exporta IPA firmado (usa los perfiles aplicados)
           flutter build ipa --release \
             --build-name=$BUILD_NAME \
             --build-number=$BUILD_NUMBER \
@@ -90,11 +92,10 @@ workflows:
       - build/ios/archive/*.xcarchive
     publishing:
       app_store_connect:
-        # Autenticación por variables (asegurate de tenerlas cargadas en Environment variables)
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
-        # opcional:
+        # opcional: definir grupos de testers
         # beta_groups:
         #   - Internal Testers
