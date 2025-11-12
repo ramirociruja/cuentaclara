@@ -30,16 +30,16 @@ workflows:
           cd ..
       - name: Build iOS (no code signing)
         script: |
+          # Solo compila el .app para verificar integridad. NO archiva.
           flutter build ios --release --no-codesign \
             --build-name=$BUILD_NAME \
             --build-number=$BUILD_NUMBER \
             --dart-define=API_BASE_URL=$API_BASE_URL
     artifacts:
       - build/ios/iphoneos/*.app
-      - build/ios/archive/*.xcarchive
 
   ios_testflight:
-    name: iOS Release → TestFlight
+    name: iOS Release → TestFlight (signed)
     working_directory: frontend
     max_build_duration: 90
     environment:
@@ -51,58 +51,62 @@ workflows:
         BUILD_NAME: 1.0.0
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
-      groups:
-        - app_store_connect   # Debe contener: APP_STORE_CONNECT_PRIVATE_KEY / KEY_IDENTIFIER / ISSUER_ID
+        TEAM_ID: XQJ843FZ7Q
+      # Si NO vas a usar "Integrations", definí estas 3 variables en Environment variables:
+      # APP_STORE_CONNECT_PRIVATE_KEY  (contenido completo del .p8, incluyendo BEGIN/END)
+      # APP_STORE_CONNECT_KEY_IDENTIFIER (ej: 1A2BC3D4EF)
+      # APP_STORE_CONNECT_ISSUER_ID      (UUID)
     cache:
       cache_paths:
         - ~/.pub-cache
         - ~/Library/Caches/CocoaPods
         - ios/Pods
         - build
+
     scripts:
       - name: Flutter clean & pub get
         script: |
           flutter clean
           flutter pub get
 
-      - name: Pod install (iOS)
+      - name: Install pods
         script: |
           cd ios
           pod install --repo-update
           cd ..
 
-      - name: Prepare automatic signing (App Store Connect)
+      - name: Prepare automatic signing (fetch certs & profiles)
         script: |
-          # 1) Keychain para certificados
+          # 1) Keychain y credenciales
           keychain initialize
-
-          # 2) Descargar/crear perfiles y certificados (App Store)
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
-
-          # 3) Importar certificados al keychain
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
           keychain add-certificates
 
-          # 4) Aplicar perfiles al proyecto Xcode (desactiva auto-signing y setea el provisioning profile correcto)
-          xcode-project use-profiles
+          # 2) Aplicar perfiles al proyecto (ajusta PROVISIONING_PROFILE_SPECIFIER por target/CONFIG)
+          xcode-project use-profiles --project ios/Runner.xcodeproj --scheme Runner
 
-      - name: Build (no codesign) + Package & Sign IPA
+          echo "== Perfiles disponibles =="
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles || true
+
+      - name: Build & Sign IPA (Xcode)
         script: |
-          # 5) Construir el Runner sin firmar (Flutter)
-          flutter build ios --release --no-codesign \
-            --build-name=$BUILD_NAME \
-            --build-number=$BUILD_NUMBER \
-            --dart-define=API_BASE_URL=$API_BASE_URL
-
-          # 6) Empaquetar y firmar IPA usando los perfiles ya aplicados
+          # Usamos herramienta de Codemagic que envuelve xcodebuild con export correcto para App Store
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+            --scheme Runner \
+            --archive-method app-store \
+            --team-id $TEAM_ID
 
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
+
     publishing:
       app_store_connect:
+        # Publica a TestFlight usando las mismas credenciales de arriba
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
