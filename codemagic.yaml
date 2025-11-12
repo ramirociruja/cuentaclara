@@ -65,18 +65,26 @@ workflows:
         script: |
           flutter clean
           flutter pub get
+
       - name: Prepare automatic signing (App Store Connect)
         script: |
+          # 1) Inicializa y agrega los certificados al llavero
           keychain initialize
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           keychain add-certificates
-          xcode-project use-profiles
+
+          # 2) Aplica los perfiles descargados al proyecto Xcode
+          #    (esto deshabilita el auto-signing y asigna el provisioning profile correcto)
+          xcode-project use-profiles --project ios/Runner.xcodeproj --scheme Runner --bundle-id "$BUNDLE_ID"
+
       - name: Build IPA (signed)
         script: |
+          # 3) Compila y exporta IPA firmado (Flutter usa xcodebuild por debajo)
           flutter build ipa --release \
             --build-name=$BUILD_NAME \
             --build-number=$BUILD_NUMBER \
             --dart-define=API_BASE_URL=$API_BASE_URL
+
     artifacts:
       - build/ios/ipa/*.ipa
       - build/ios/archive/*.xcarchive
