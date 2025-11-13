@@ -67,15 +67,13 @@ workflows:
           flutter pub get
 
       - name: Install pods
-        script: |
+        script: |
           cd ios
           pod install --repo-update
           cd ..
 
       - name: Code Signing (AUTOMATIC) 🚀
-        # Codemagic usa la API Key para crear/descargar el certificado (.p12)
-        # y el perfil de aprovisionamiento (.mobileprovision) automáticamente.
-        script: |
+        script: |
           xcode-project use-profiles \
             --project "ios/Runner.xcodeproj" \
             --profile "CM_PROVISIONING_PROFILE_APP_STORE" \
@@ -83,7 +81,6 @@ workflows:
             --project-type flutter
 
       - name: Build & Sign IPA (SIMPLE)
-        # Se usa 'flutter build ipa' que usa los perfiles configurados en el paso anterior.
         script: |
           flutter build ipa --release \
             --build-name=$BUILD_NAME \
@@ -104,5 +101,3 @@ workflows:
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
-        # beta_groups:
-        #   - Internal Testers
