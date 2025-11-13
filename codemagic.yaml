@@ -14,28 +14,28 @@ workflows:
         API_BASE_URL: https://cuentaclara-production.up.railway.app
     cache:
       cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-        - ios/Pods
-        - build
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
     scripts:
       - name: Flutter clean & pub get
         script: |
-          flutter clean
-          flutter pub get
+          flutter clean
+          flutter pub get
       - name: Install pods (iOS)
         script: |
-          cd ios
-          pod install --repo-update
-          cd ..
+          cd ios
+          pod install --repo-update
+          cd ..
       - name: Build iOS (no code signing)
         script: |
-          flutter build ios --release --no-codesign \
-            --build-name=$BUILD_NAME \
-            --build-number=$BUILD_NUMBER \
-            --dart-define=API_BASE_URL=$API_BASE_URL
+          flutter build ios --release --no-codesign \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
     artifacts:
-      - build/ios/iphoneos/*.app
+      - build/ios/iphoneos/*.app
 
   ios_testflight:
     name: iOS Release → TestFlight (signed)
@@ -46,7 +46,7 @@ workflows:
       xcode: latest
       cocoapods: default
       groups:
-        - app_store_connect # ¡Mantener! Conecta las variables con el workflow.
+        - app_store_connect # ¡Mantener! Conecta las variables con el workflow.
       vars:
         BUNDLE_ID: com.cuentaclara.app
         BUILD_NAME: 1.0.0
@@ -55,48 +55,48 @@ workflows:
         TEAM_ID: XQJ843FZ7Q # Se necesita para la firma automática.
     cache:
       cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-        - ios/Pods
-        - build
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
 
     scripts:
       - name: Flutter clean & pub get
         script: |
-          flutter clean
-          flutter pub get
+          flutter clean
+          flutter pub get
 
       - name: Install pods
         script: |
-          cd ios
-          pod install --repo-update
-          cd ..
+          cd ios
+          pod install --repo-update
+          cd ..
 
       - name: Code Signing (AUTOMATIC) 🚀
         # Codemagic usa la API Key para crear/descargar el certificado (.p12)
         # y el perfil de aprovisionamiento (.mobileprovision) automáticamente.
         script: |
-          xcode-project use-profiles \
-            --project "ios/Runner.xcodeproj" \
-            --profile "CM_PROVISIONING_PROFILE_APP_STORE" \
-            --certificate "CM_CERTIFICATE_APP_STORE" \
-            --project-type flutter
+          xcode-project use-profiles \
+            --project "ios/Runner.xcodeproj" \
+            --profile "CM_PROVISIONING_PROFILE_APP_STORE" \
+            --certificate "CM_CERTIFICATE_APP_STORE" \
+            --project-type flutter
 
       - name: Build & Sign IPA (SIMPLE)
         # Se usa 'flutter build ipa' que usa los perfiles configurados en el paso anterior.
         script: |
-          flutter build ipa --release \
-            --build-name=$BUILD_NAME \
-            --build-number=$BUILD_NUMBER \
-            --dart-define=API_BASE_URL=$API_BASE_URL
+          flutter build ipa --release \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
 
       - name: Imprimir info IPA (opcional)
         script: |
-          xcode-project ipa-info build/ios/ipa/*.ipa || true
+          xcode-project ipa-info build/ios/ipa/*.ipa || true
 
     artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
 
     publishing:
       app_store_connect:
