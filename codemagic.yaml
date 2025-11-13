@@ -27,17 +27,20 @@ workflows:
         script: |
           flutter clean
           flutter pub get
+
       - name: Install pods (iOS)
         script: |
           cd ios
           pod install --repo-update
           cd ..
+
       - name: Build iOS (no code signing)
         script: |
           flutter build ios --release --no-codesign \
             --build-name=$BUILD_NAME \
             --build-number=$BUILD_NUMBER \
             --dart-define=API_BASE_URL=$API_BASE_URL
+
     artifacts:
       - build/ios/iphoneos/*.app
 
@@ -50,13 +53,14 @@ workflows:
       xcode: latest
       cocoapods: default
       groups:
-        - app_store_connect # Asegura que el Issuer ID y Keys lleguen al script
+        - app_store_connect
       vars:
         BUNDLE_ID: com.cuentaclara.app
         BUILD_NAME: 1.0.0
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
         TEAM_ID: XQJ843FZ7Q
+
     cache:
       cache_paths:
         - ~/.pub-cache
@@ -65,6 +69,11 @@ workflows:
         - build
 
     scripts:
+      - name: Setup Keychain and Certificates 🔑
+        script: |
+          keychain initialize
+          keychain add-certificates
+
       - name: Flutter clean & pub get
         script: |
           flutter clean
@@ -76,15 +85,13 @@ workflows:
           pod install --repo-update
           cd ..
 
-      - name: Code Signing - Get Profile (Step 1)
-        # Usa la API Key para crear/descargar el perfil. El .p12 ya está en la UI de Codemagic.
+      - name: "Code Signing: Get Profile (Step 1)"
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE --create
 
-      - name: Create export_options.plist (Step 2)
+      - name: "Create export_options.plist (Step 2)"
         script: |
-          # Detecta el .mobileprovision descargado y extrae su nombre
           PROF_PATH="$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -n 1)"
           if [ -z "$PROF_PATH" ]; then
             echo "No provisioning profiles found after fetch-signing-files"
@@ -92,7 +99,6 @@ workflows:
           fi
 
           PROFILE_NAME="$(security cms -D -i "$PROF_PATH" | /usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin)"
-          echo "Usando provisioning profile: $PROFILE_NAME"
 
           cat > /Users/builder/export_options.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -118,14 +124,10 @@ workflows:
           </plist>
           EOF
 
-          # Sustituye placeholders por valores reales
           /usr/bin/sed -i "" "s#__BUNDLE_ID__#${BUNDLE_ID}#g" /Users/builder/export_options.plist
           /usr/bin/sed -i "" "s#__PROFILE_NAME__#${PROFILE_NAME}#g" /Users/builder/export_options.plist
 
-          echo "export_options.plist generado en /Users/builder/export_options.plist:"
-          cat /Users/builder/export_options.plist
-
-      - name: Build & Sign IPA (Step 3)
+      - name: "Build & Sign IPA (Step 3)"
         script: |
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
