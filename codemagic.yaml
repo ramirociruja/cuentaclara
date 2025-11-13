@@ -65,4 +65,57 @@ workflows:
         TEAM_ID: XQJ843FZ7Q
 
     cache:
-      cache_path_
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
+
+    scripts:
+      # 1) Inicializar keychain
+      - name: Setup Keychain 🔑
+        script: |
+          keychain initialize
+
+      # 2) Flutter clean & pub get
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
+          flutter pub get
+
+      # 3) Instalar pods
+      - name: Install pods
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      # 4) Aplicar certificados y provisioning profiles subidos a Codemagic
+      - name: Aplicar perfiles de firma (use-profiles)
+        script: |
+          xcode-project use-profiles --export-options-plist "$HOME/export_options.plist"
+
+      # 5) Build del IPA firmado
+      - name: Build IPA firmado
+        script: |
+          flutter build ipa --release \
+            --export-options-plist="$HOME/export_options.plist" \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
+
+      # 6) Info del IPA (opcional)
+      - name: Imprimir info IPA (opcional)
+        script: |
+          xcode-project ipa-info build/ios/ipa/*.ipa || true
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
+
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
