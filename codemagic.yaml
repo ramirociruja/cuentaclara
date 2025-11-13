@@ -72,13 +72,16 @@ workflows:
           pod install --repo-update
           cd ..
 
-      - name: Code Signing (AUTOMATIC) 🚀
+      - name: Fetch iOS signing files
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE --create
+          keychain add-certificates
+      
+      - name: Set provisioning profiles
         script: |
           xcode-project use-profiles \
-            --project "ios/Runner.xcodeproj" \
-            --profile "CM_PROVISIONING_PROFILE_APP_STORE" \
-            --certificate "CM_CERTIFICATE_APP_STORE" \
-            --project-type flutter
+            --project "ios/Runner.xcodeproj"
 
       - name: Build & Sign IPA (SIMPLE)
         script: |
