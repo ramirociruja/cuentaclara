@@ -14,7 +14,7 @@ workflows:
       vars:
         BUNDLE_ID: com.cuentaclara.app
         BUILD_NAME: 1.0.0
-        BUILD_NUMBER: 1
+        BUILD_NUMBER: 2
         API_BASE_URL: https://cuentaclara-production.up.railway.app
     cache:
       cache_paths:
@@ -64,7 +64,7 @@ workflows:
       vars:
         BUNDLE_ID: com.cuentaclara.app
         BUILD_NAME: 1.0.0
-        BUILD_NUMBER: 1
+        BUILD_NUMBER: 2
         API_BASE_URL: https://cuentaclara-production.up.railway.app
         TEAM_ID: XQJ843FZ7Q
 
