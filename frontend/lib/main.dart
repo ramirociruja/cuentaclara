@@ -12,27 +12,26 @@ import 'package:frontend/services/api_service.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
-void main() async {
+void main() {
   runZonedGuarded(
-    () async {
+    () {
       WidgetsFlutterBinding.ensureInitialized();
 
-      // Handlers de errores de framework/zona
+      // Handler de errores de Flutter
       FlutterError.onError = (FlutterErrorDetails details) {
         FlutterError.dumpErrorToConsole(details);
       };
+
+      // Handler de errores no capturados a nivel de plataforma
       PlatformDispatcher.instance.onError = (error, stack) {
-        debugPrint('UNCAUGHT: $error\n$stack');
+        debugPrint('UNCAUGHT (platform): $error\n$stack');
         return true;
       };
-
-      // Init seguro de tokens + migración si hace falta
-      await ApiService.init();
 
       runApp(const CuentaClaraApp());
     },
     (error, stack) {
-      debugPrint('ZONED ERROR: $error\n$stack');
+      debugPrint('ZONED ERROR (main): $error\n$stack');
     },
   );
 }
@@ -70,13 +69,11 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
           ),
         );
 
-        // Limpia el backstack y lleva a Login
         await appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
           '/login',
           (r) => false,
         );
 
-        // libera cerrojo en el siguiente frame
         await Future<void>.delayed(Duration.zero);
         _handlingRedirect = false;
       }
@@ -111,10 +108,7 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3366CC)),
         useMaterial3: true,
       ),
-
-      // En vez de initialRoute fijo, usamos un gate que decide
       home: const _AuthGate(),
-
       routes: {
         '/login': (_) => const LoginScreen(),
         '/home': (_) => const HomeScreen(),
@@ -144,6 +138,7 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
 
 /// Controla la pantalla inicial:
 /// - Muestra spinner
+/// - Inicializa ApiService
 /// - Intenta trySilentLogin()
 /// - Redirige a Home o Login
 class _AuthGate extends StatefulWidget {
@@ -163,20 +158,30 @@ class _AuthGateState extends State<_AuthGate> {
   }
 
   Future<void> _bootstrap() async {
+    bool ok = false;
+
     try {
-      final ok = await ApiService.trySilentLogin();
-      if (!mounted) return;
-      setState(() {
-        _logged = ok;
-        _checking = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _logged = false;
-        _checking = false;
-      });
+      // Logueamos el baseUrl para saber qué quedó en runtime
+      debugPrint('### API_BASE_URL (runtime) = ${ApiService.baseUrl}');
+
+      // Inicializar tokens / storage / etc.
+      await ApiService.init();
+    } catch (e, st) {
+      debugPrint('Error en ApiService.init(): $e\n$st');
     }
+
+    try {
+      ok = await ApiService.trySilentLogin();
+    } catch (e, st) {
+      debugPrint('Error en trySilentLogin(): $e\n$st');
+      ok = false;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _logged = ok;
+      _checking = false;
+    });
   }
 
   @override

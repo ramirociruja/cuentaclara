@@ -10,14 +10,27 @@ db: Session = SessionLocal()
 hashed_password = pwd_context.hash("123456")  # Cambiá por tu contraseña
 
 new_employee = Employee(
-    name="Admin",
+    name="Nadia Morales",
     role="admin",
-    email="admin3@example.com",
+    email="nadiadmorales16@gmail.com",
     password=hashed_password,
-    company_id=1  # Usá un ID de empresa válido en tu DB
+    company_id=4  # Usá un ID de empresa válido en tu DB
+)
+
+new_employee2 = Employee(
+    name="Agustin Diaz",
+    role="cobrador",
+    email="Diazagustin2w@gmail.com",
+    password=hashed_password,
+    company_id=4  # Usá un ID de empresa válido en tu DB
 )
 
 db.add(new_employee)
 db.commit()
 db.refresh(new_employee)
 print("Empleado creado con ID:", new_employee.id)
+
+db.add(new_employee2)
+db.commit()
+db.refresh(new_employee2)
+print("Empleado creado con ID:", new_employee2.id)

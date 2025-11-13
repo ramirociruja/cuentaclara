@@ -6,8 +6,8 @@ db = SessionLocal()
 
 # Crear la empresa
 new_company = Company(
-    id = 3,
-    name="Soluciones Financieras S.A.",
+    id = 4,
+    name="La Fija S.A.",
     created_at=datetime.utcnow(),
     updated_at=datetime.utcnow()
 )
