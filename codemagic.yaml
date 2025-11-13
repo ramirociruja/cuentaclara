@@ -48,6 +48,11 @@ workflows:
     name: iOS Release → TestFlight (signed)
     working_directory: frontend
     max_build_duration: 90
+
+    # 👇 AGREGADO: decirle a Codemagic qué integración de App Store Connect usar
+    integrations:
+      app_store_connect: CuentaClara API Key  # <-- reemplazá este texto por el NOMBRE exacto de tu integración en Codemagic
+
     environment:
       flutter: stable
       xcode: latest
