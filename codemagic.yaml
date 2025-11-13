@@ -1,3 +1,7 @@
+#
+# Codemagic CI/CD para la aplicación cuentaclara
+#
+
 workflows:
   ios_prepare:
     name: iOS Prepare (no signing)
@@ -46,13 +50,13 @@ workflows:
       xcode: latest
       cocoapods: default
       groups:
-        - app_store_connect # ¡Mantener! Conecta las variables con el workflow.
+        - app_store_connect # Asegura que el Issuer ID y Keys lleguen al script
       vars:
         BUNDLE_ID: com.cuentaclara.app
         BUILD_NAME: 1.0.0
         BUILD_NUMBER: 1
         API_BASE_URL: https://cuentaclara-production.up.railway.app
-        TEAM_ID: XQJ843FZ7Q # Se necesita para la firma automática.
+        TEAM_ID: XQJ843FZ7Q
     cache:
       cache_paths:
         - ~/.pub-cache
@@ -72,23 +76,61 @@ workflows:
           pod install --repo-update
           cd ..
 
-      - name: Fetch iOS signing files
+      - name: Code Signing: Get Profile (Step 1)
+        # Usa la API Key para crear/descargar el perfil. El .p12 ya está en la UI de Codemagic.
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE --create
-          keychain add-certificates
-      
-      - name: Set provisioning profiles
-        script: |
-          xcode-project use-profiles \
-            --project "ios/Runner.xcodeproj"
 
-      - name: Build & Sign IPA (SIMPLE)
+      - name: Create export_options.plist (Step 2)
         script: |
-          flutter build ipa --release \
-            --build-name=$BUILD_NAME \
-            --build-number=$BUILD_NUMBER \
-            --dart-define=API_BASE_URL=$API_BASE_URL
+          # Detecta el .mobileprovision descargado y extrae su nombre
+          PROF_PATH="$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -n 1)"
+          if [ -z "$PROF_PATH" ]; then
+            echo "No provisioning profiles found after fetch-signing-files"
+            exit 1
+          fi
+
+          PROFILE_NAME="$(security cms -D -i "$PROF_PATH" | /usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin)"
+          echo "Usando provisioning profile: $PROFILE_NAME"
+
+          cat > /Users/builder/export_options.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>destination</key>
+            <string>export</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>__BUNDLE_ID__</key>
+              <string>__PROFILE_NAME__</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+          # Sustituye placeholders por valores reales
+          /usr/bin/sed -i "" "s#__BUNDLE_ID__#${BUNDLE_ID}#g" /Users/builder/export_options.plist
+          /usr/bin/sed -i "" "s#__PROFILE_NAME__#${PROFILE_NAME}#g" /Users/builder/export_options.plist
+
+          echo "export_options.plist generado en /Users/builder/export_options.plist:"
+          cat /Users/builder/export_options.plist
+
+      - name: Build & Sign IPA (Step 3)
+        script: |
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner \
+            --export-options-plist /Users/builder/export_options.plist
 
       - name: Imprimir info IPA (opcional)
         script: |
