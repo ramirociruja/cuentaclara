@@ -149,7 +149,6 @@ class _AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<_AuthGate> {
   bool _checking = true;
-  bool _logged = false;
 
   @override
   void initState() {
@@ -158,28 +157,21 @@ class _AuthGateState extends State<_AuthGate> {
   }
 
   Future<void> _bootstrap() async {
-    bool ok = false;
+    // 👉 Versión ultra simple:
+    // - Logueamos el baseUrl (por si después mirás logs)
+    // - Intentamos init de ApiService pero si falla NO nos frena el arranque
+    // - No hacemos trySilentLogin, siempre vamos a Login
 
     try {
-      // Logueamos el baseUrl para saber qué quedó en runtime
       debugPrint('### API_BASE_URL (runtime) = ${ApiService.baseUrl}');
-
-      // Inicializar tokens / storage / etc.
       await ApiService.init();
     } catch (e, st) {
       debugPrint('Error en ApiService.init(): $e\n$st');
     }
 
-    try {
-      ok = await ApiService.trySilentLogin();
-    } catch (e, st) {
-      debugPrint('Error en trySilentLogin(): $e\n$st');
-      ok = false;
-    }
-
     if (!mounted) return;
     setState(() {
-      _logged = ok;
+      // 👈 Siempre Login por ahora
       _checking = false;
     });
   }
@@ -189,6 +181,7 @@ class _AuthGateState extends State<_AuthGate> {
     if (_checking) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return _logged ? const HomeScreen() : const LoginScreen();
+    // 👇 Siempre va a Login. Si esto aparece en iOS, sabemos que la UI está bien.
+    return const LoginScreen();
   }
 }
