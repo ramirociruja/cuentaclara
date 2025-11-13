@@ -30,14 +30,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.2.0
-  flutter_secure_storage: ^9.2.4
-  shared_preferences: ^2.2.2  # o la última versión
-  intl: ^0.20.2
-  dropdown_search: ^5.0.6 # Add the latest version here
-  pdf: ^3.11.0
-  printing: ^5.13.1
-  share_plus: ^10.0.2
+  #http: ^1.2.0
+  #flutter_secure_storage: ^9.2.4
+  #shared_preferences: ^2.2.2  # o la última versión
+  #intl: ^0.20.2
+  #dropdown_search: ^5.0.6 # Add the latest version here
+  #pdf: ^3.11.0
+  #printing: ^5.13.1
+  #share_plus: ^10.0.2
 
 
   # The following adds the Cupertino Icons font to your application.
