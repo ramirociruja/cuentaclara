@@ -1,158 +1,108 @@
 workflows:
-  ios_prepare:
-    name: iOS Prepare (no signing)
-    working_directory: frontend
-    max_build_duration: 60
-    environment:
-      flutter: stable
-      xcode: latest
-      cocoapods: default
-      vars:
-        BUNDLE_ID: com.cuentaclara.app
-        BUILD_NAME: 1.0.0
-        BUILD_NUMBER: 1
-        API_BASE_URL: https://cuentaclara-production.up.railway.app
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-        - ios/Pods
-        - build
-    scripts:
-      - name: Flutter clean & pub get
-        script: |
-          flutter clean
-          flutter pub get
-      - name: Install pods (iOS)
-        script: |
-          cd ios
-          pod install --repo-update
-          cd ..
-      - name: Build iOS (no code signing)
-        script: |
-          flutter build ios --release --no-codesign \
-            --build-name=$BUILD_NAME \
-            --build-number=$BUILD_NUMBER \
-            --dart-define=API_BASE_URL=$API_BASE_URL
-    artifacts:
-      - build/ios/iphoneos/*.app
+  ios_prepare:
+    name: iOS Prepare (no signing)
+    working_directory: frontend
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.cuentaclara.app
+        BUILD_NAME: 1.0.0
+        BUILD_NUMBER: 1
+        API_BASE_URL: https://cuentaclara-production.up.railway.app
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
+    scripts:
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
+          flutter pub get
+      - name: Install pods (iOS)
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
+      - name: Build iOS (no code signing)
+        script: |
+          flutter build ios --release --no-codesign \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
+    artifacts:
+      - build/ios/iphoneos/*.app
 
-  ios_testflight:
-    name: iOS Release → TestFlight (signed)
-    working_directory: frontend
-    max_build_duration: 90
-    environment:
-      flutter: stable
-      xcode: latest
-      cocoapods: default
-      groups:
-        - app_store_connect
-      vars:
-        BUNDLE_ID: com.cuentaclara.app
-        BUILD_NAME: 1.0.0
-        BUILD_NUMBER: 1
-        API_BASE_URL: https://cuentaclara-production.up.railway.app
-        TEAM_ID: XQJ843FZ7Q
-      # Si no usás Integrations, asegurate de tener en Environment variables:
-      # APP_STORE_CONNECT_PRIVATE_KEY  (PEGAR el .p8 completo con BEGIN/END)
-      # APP_STORE_CONNECT_KEY_IDENTIFIER
-      # APP_STORE_CONNECT_ISSUER_ID
-    cache:
-      cache_paths:
-        - ~/.pub-cache
-        - ~/Library/Caches/CocoaPods
-        - ios/Pods
-        - build
+  ios_testflight:
+    name: iOS Release → TestFlight (signed)
+    working_directory: frontend
+    max_build_duration: 90
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      groups:
+        - app_store_connect # ¡Mantener! Conecta las variables con el workflow.
+      vars:
+        BUNDLE_ID: com.cuentaclara.app
+        BUILD_NAME: 1.0.0
+        BUILD_NUMBER: 1
+        API_BASE_URL: https://cuentaclara-production.up.railway.app
+        TEAM_ID: XQJ843FZ7Q # Se necesita para la firma automática.
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/Library/Caches/CocoaPods
+        - ios/Pods
+        - build
 
-    scripts:
-      - name: Flutter clean & pub get
-        script: |
-          flutter clean
-          flutter pub get
+    scripts:
+      - name: Flutter clean & pub get
+        script: |
+          flutter clean
+          flutter pub get
 
-      - name: Install pods
-        script: |
-          cd ios
-          pod install --repo-update
-          cd ..
+      - name: Install pods
+        script: |
+          cd ios
+          pod install --repo-update
+          cd ..
 
-      - name: Fetch signing files (App Store Connect)
-        script: |
-          keychain initialize
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "$APP_STORE_CONNECT_PRIVATE_KEY"
-          keychain add-certificates
-          xcode-project use-profiles --project ios/Runner.xcodeproj --scheme Runner
+      - name: Code Signing (AUTOMATIC) 🚀
+        # Codemagic usa la API Key para crear/descargar el certificado (.p12)
+        # y el perfil de aprovisionamiento (.mobileprovision) automáticamente.
+        script: |
+          xcode-project use-profiles \
+            --project "ios/Runner.xcodeproj" \
+            --profile "CM_PROVISIONING_PROFILE_APP_STORE" \
+            --certificate "CM_CERTIFICATE_APP_STORE" \
+            --project-type flutter
 
-          echo "Perfiles descargados:"
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles || true
+      - name: Build & Sign IPA (SIMPLE)
+        # Se usa 'flutter build ipa' que usa los perfiles configurados en el paso anterior.
+        script: |
+          flutter build ipa --release \
+            --build-name=$BUILD_NAME \
+            --build-number=$BUILD_NUMBER \
+            --dart-define=API_BASE_URL=$API_BASE_URL
 
-      - name: Create export_options.plist (App Store)
-        script: |
-          # Detecta el primer .mobileprovision y extrae el Name del perfil
-          PROF_PATH="$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -n 1)"
-          if [ -z "$PROF_PATH" ]; then
-            echo "No provisioning profiles found after fetch-signing-files"
-            exit 1
-          fi
+      - name: Imprimir info IPA (opcional)
+        script: |
+          xcode-project ipa-info build/ios/ipa/*.ipa || true
 
-          PROFILE_NAME="$(security cms -D -i "$PROF_PATH" | /usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin)"
-          echo "Usando provisioning profile: $PROFILE_NAME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/archive/*.xcarchive
 
-          cat > /Users/builder/export_options.plist <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>compileBitcode</key>
-            <false/>
-            <key>uploadSymbols</key>
-            <true/>
-            <key>destination</key>
-            <string>export</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>__BUNDLE_ID__</key>
-              <string>__PROFILE_NAME__</string>
-            </dict>
-          </dict>
-          </plist>
-          EOF
-
-          # Sustituye placeholders por valores reales
-          /usr/bin/sed -i "" "s#__BUNDLE_ID__#${BUNDLE_ID}#g" /Users/builder/export_options.plist
-          /usr/bin/sed -i "" "s#__PROFILE_NAME__#${PROFILE_NAME}#g" /Users/builder/export_options.plist
-
-          echo "export_options.plist generado en /Users/builder/export_options.plist:"
-          cat /Users/builder/export_options.plist
-
-      - name: Build & Sign IPA
-        script: |
-          # Usar el export_options.plist recién creado
-          xcode-project build-ipa \
-            --workspace ios/Runner.xcworkspace \
-            --scheme Runner \
-            --export-options-plist /Users/builder/export_options.plist
-
-      - name: Imprimir info IPA (opcional)
-        script: |
-          xcode-project ipa-info build/ios/ipa/*.ipa || true
-
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
-
-    publishing:
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        submit_to_testflight: true
-        # beta_groups:
-        #   - Internal Testers
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
+        # beta_groups:
+        #   - Internal Testers
