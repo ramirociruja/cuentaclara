@@ -44,7 +44,7 @@ workflows:
     artifacts:
       - build/ios/iphoneos/*.app
 
-   ios_testflight:
+  ios_testflight:
     name: iOS Release → TestFlight (signed)
     working_directory: frontend
     max_build_duration: 90
