@@ -50,7 +50,7 @@ workflows:
     max_build_duration: 90
 
     integrations:
-      app_store_connect: CuentaClara ASC Key   # <-- el nombre que le pusiste en Codemagic
+      app_store_connect: CuentaClara API Key  # <-- el nombre que le pusiste en Codemagic
 
     environment:
       flutter: stable
