@@ -45,6 +45,8 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      groups:
+        - app_store_connect
       vars:
         BUNDLE_ID: com.cuentaclara.app
         BUILD_NAME: 1.0.0
