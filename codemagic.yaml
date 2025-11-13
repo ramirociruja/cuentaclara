@@ -49,9 +49,8 @@ workflows:
     working_directory: frontend
     max_build_duration: 90
 
-    # 👇 AGREGADO: decirle a Codemagic qué integración de App Store Connect usar
     integrations:
-      app_store_connect: CuentaClara API Key  # <-- reemplazá este texto por el NOMBRE exacto de tu integración en Codemagic
+      app_store_connect: CuentaClara ASC Key   # <-- el nombre que le pusiste en Codemagic
 
     environment:
       flutter: stable
@@ -82,25 +81,30 @@ workflows:
         script: |
           keychain initialize
 
-      # 2) Flutter clean & pub get
+      # 2) Importar los .p12 que subiste en Code signing identities
+      - name: Add certificates to keychain
+        script: |
+          keychain add-certificates
+
+      # 3) Flutter clean & pub get
       - name: Flutter clean & pub get
         script: |
           flutter clean
           flutter pub get
 
-      # 3) Instalar pods
+      # 4) Instalar pods
       - name: Install pods
         script: |
           cd ios
           pod install --repo-update
           cd ..
 
-      # 4) Aplicar certificados y provisioning profiles subidos a Codemagic
+      # 5) Aplicar provisioning profiles y generar export_options.plist
       - name: Aplicar perfiles de firma (use-profiles)
         script: |
           xcode-project use-profiles --export-options-plist "$HOME/export_options.plist"
 
-      # 5) Build del IPA firmado
+      # 6) Build del IPA firmado
       - name: Build IPA firmado
         script: |
           flutter build ipa --release \
@@ -109,7 +113,7 @@ workflows:
             --build-number=$BUILD_NUMBER \
             --dart-define=API_BASE_URL=$API_BASE_URL
 
-      # 6) Info del IPA (opcional)
+      # 7) Info del IPA (opcional)
       - name: Imprimir info IPA (opcional)
         script: |
           xcode-project ipa-info build/ios/ipa/*.ipa || true
