@@ -76,7 +76,7 @@ workflows:
           pod install --repo-update
           cd ..
 
-      - name: Code Signing: Get Profile (Step 1)
+      - name: Code Signing - Get Profile (Step 1)
         # Usa la API Key para crear/descargar el perfil. El .p12 ya está en la UI de Codemagic.
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
