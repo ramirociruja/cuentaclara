@@ -147,7 +147,7 @@ workflows:
 
       - name: Install pods
         script: |
-          echo "Skipping pod install, pods are committed"pod install --repo-update
+          echo "Skipping pod install, pods are committed"
 
     artifacts:
       - ios/Pods/**/*
