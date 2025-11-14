@@ -128,3 +128,29 @@ workflows:
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
+
+
+  ios_generate_pods:
+    name: Generate iOS Pods (no signing)
+    working_directory: frontend
+    max_build_duration: 20
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Clean + pub get
+        script: |
+          flutter clean
+          flutter pub get
+
+      - name: Install pods
+        script: |
+          cd ios
+          pod install --repo-update
+
+    artifacts:
+      - ios/Pods/**/*
+      - ios/Podfile.lock
+      - ios/Podfile
