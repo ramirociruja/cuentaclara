@@ -95,9 +95,7 @@ workflows:
       # 4) Instalar pods
       - name: Install pods
         script: |
-          cd ios
-          pod install --repo-update
-          cd ..
+          echo "Skipping pod install, pods are committed"
 
       # 5) Aplicar provisioning profiles y generar export_options.plist
       - name: Aplicar perfiles de firma (use-profiles)
@@ -147,9 +145,12 @@ workflows:
 
       - name: Install pods
         script: |
-          echo "Skipping pod install, pods are committed"
+          cd ios
+          pod install --repo-update
 
     artifacts:
       - ios/Pods/**/*
-      - ios/Podfile.lock
       - ios/Podfile
+      - ios/Podfile.lock
+      - ios/Flutter/Flutter.podspec
+      - ios/Runner.xcworkspace/**/*
