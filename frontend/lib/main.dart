@@ -192,3 +192,4 @@ class _AuthGateState extends State<_AuthGate> {
     return _logged ? const HomeScreen() : const LoginScreen();
   }
 }
+
