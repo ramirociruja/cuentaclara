@@ -331,15 +331,24 @@ def create_loan(
     # Validar cliente y empresa
     customer = _assert_customer_same_company(loan.customer_id, db, current)
 
-    zone = AR_TZ  # si querés parametrizar por compañía/usuario, podés hacerlo
-    # start_date: si viene, normalizá a UTC; si no, now UTC
+    zone = AR_TZ  # p.ej. ZoneInfo("America/Argentina/Buenos_Aires")
+
+    # === 1) Definir start_date en HORARIO LOCAL ===
     if loan.start_date:
         sd = loan.start_date
+
+        # Si viene sin tzinfo, interpretarla como hora LOCAL, no como UTC
         if sd.tzinfo is None:
-            sd = sd.replace(tzinfo=timezone.utc)
-        start_date_utc = sd.astimezone(timezone.utc)
+            sd = sd.replace(tzinfo=zone)
+
+        # Trabajamos en local
+        start_local = sd.astimezone(zone)
     else:
-        start_date_utc = datetime.now(timezone.utc)
+        # Si no viene, usar ahora local
+        start_local = datetime.now(zone)
+
+    # Guardar start_date en UTC en la Loan
+    start_date_utc = start_local.astimezone(timezone.utc)
 
     new_loan = Loan(
         **loan.model_dump(exclude={"installments", "start_date", "company_id"}),
@@ -357,29 +366,34 @@ def create_loan(
     db.commit()
     db.refresh(new_loan)
 
-    # Crear cuotas automáticamente
+    # === 2) Crear cuotas en base a start_local ===
     for i in range(loan.installments_count):
         if loan.frequency == "weekly":
-            due_local = start_date_utc.astimezone(zone) + timedelta(weeks=i + 1)
+            # sumamos semanas desde la FECHA LOCAL de inicio
+            due_local = start_local + timedelta(weeks=i + 1)
         else:
             # mensual simple (4 semanas aprox)
-            due_local = start_date_utc.astimezone(zone) + timedelta(weeks=(i + 1) * 4)
+            due_local = start_local + timedelta(weeks=(i + 1) * 4)
 
-        # due_date = midnight LOCAL → UTC
+        # due_date = medianoche LOCAL → UTC
         local_midnight = due_local.replace(hour=0, minute=0, second=0, microsecond=0)
         due_date_utc = local_midnight.astimezone(timezone.utc)
 
         # status inicial según día local
         today_local = datetime.now(zone).date()
         is_overdue = (local_midnight.date() < today_local)
-        init_status = InstallmentStatus.OVERDUE.value if is_overdue else InstallmentStatus.PENDING.value
+        init_status = (
+            InstallmentStatus.OVERDUE.value
+            if is_overdue
+            else InstallmentStatus.PENDING.value
+        )
 
         installment = Installment(
             loan_id=new_loan.id,
             amount=installment_amount,
-            due_date=due_date_utc,      # 👈 UTC
+            due_date=due_date_utc,  # UTC
             is_paid=False,
-            status=init_status,          # EN canónico
+            status=init_status,
             number=i + 1,
             paid_amount=0.0,
             is_overdue=is_overdue,
@@ -388,6 +402,7 @@ def create_loan(
 
     db.commit()
     return new_loan
+
 
 
 # ============== LIST BY CUSTOMER ==============
