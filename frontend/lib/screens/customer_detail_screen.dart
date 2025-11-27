@@ -470,7 +470,10 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
+              if (loan.employeeName != null &&
+                  loan.employeeName!.trim().isNotEmpty)
+                _buildDetailRow('Cobrador:', loan.employeeName!),
               _buildDetailRow('Monto:', currencyFormatter.format(loan.amount)),
               _buildDetailRow(
                 'Saldo:',

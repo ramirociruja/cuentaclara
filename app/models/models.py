@@ -78,6 +78,7 @@ class Employee(Base):
 
     company = relationship("Company", back_populates="employees")  # Relación bidireccional
     customers = relationship("Customer", back_populates="employee")  # Relación inversa
+    loans = relationship("Loan", back_populates="employee")
 
 
 class Loan(Base):
@@ -86,6 +87,7 @@ class Loan(Base):
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"))
     company_id = Column(Integer, ForeignKey('companies.id'))
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
 
     amount = Column(Float, nullable=False)
     total_due = Column(Float, nullable=False)  # Amount + interest
@@ -105,8 +107,14 @@ class Loan(Base):
     
     company = relationship("Company", back_populates="loans")  # Relación bidireccional
     customer = relationship("Customer", back_populates="loans")
+    employee = relationship("Employee", back_populates="loans")
+    
     payments = relationship("Payment", back_populates="loan")
     installments = relationship("Installment", back_populates="loan", cascade="all, delete-orphan")
+    @property
+    def employee_name(self):
+        """Nombre del cobrador / empleado dueño del préstamo."""
+        return self.employee.name if self.employee else None
 
 
 class Purchase(Base):
@@ -160,6 +168,8 @@ class Payment(Base):
 
     loan = relationship("Loan", back_populates="payments")
     purchase = relationship("Purchase", back_populates="payments")
+    collector_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
+    collector = relationship("Employee", foreign_keys=[collector_id])
 
 
 

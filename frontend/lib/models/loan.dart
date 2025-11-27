@@ -16,6 +16,11 @@ class Loan {
   final String? description;
   final int? collectionDay; // 1..7 (ISO: 1=lunes … 7=domingo)
 
+  /// 👇 NUEVO: cobrador dueño del préstamo (employee_id en backend)
+  final int? employeeId;
+
+  final String? employeeName;
+
   Loan({
     required this.id,
     required this.customerId,
@@ -30,6 +35,8 @@ class Loan {
     this.installments = const [],
     this.description,
     this.collectionDay,
+    this.employeeId, // 👈 nuevo param opcional
+    this.employeeName,
   });
 
   factory Loan.fromJson(Map<String, dynamic> json) {
@@ -53,6 +60,10 @@ class Loan {
           ((json['installments'] as List?) ?? const [])
               .map((i) => Installment.fromJson(i as Map<String, dynamic>))
               .toList(),
+
+      /// 👇 NUEVO: lo tomamos si viene del backend (puede venir null en datos viejos)
+      employeeId: (json['employee_id'] as num?)?.toInt(),
+      employeeName: json['employee_name'] as String?,
     );
   }
 
@@ -72,6 +83,9 @@ class Loan {
       if (description != null && description!.trim().isNotEmpty)
         'description': description,
       if (collectionDay != null) 'collection_day': collectionDay,
+
+      /// 👇 NUEVO: solo lo mandamos si está seteado
+      if (employeeId != null) 'employee_id': employeeId,
     };
   }
 }

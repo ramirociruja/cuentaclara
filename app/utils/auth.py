@@ -1,6 +1,7 @@
 # app/utils/auth.py
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from sqlalchemy import func
 
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
@@ -102,12 +103,19 @@ def get_current_user(
 
 @router.post("/login", response_model=TokenPairResponse)
 def login(request: LoginRequest, db: Session = Depends(get_db)):
-    # En tu esquema, username = email
-    employee = db.query(models.Employee).filter(models.Employee.email == request.username).first()
+    # Normalizar email recibido
+    normalized_email = request.username.strip().lower()
+
+    # Buscar ignorando mayúsculas/minúsculas
+    employee = (
+        db.query(models.Employee)
+        .filter(func.lower(models.Employee.email) == normalized_email)
+        .first()
+    )
+
     if not employee:
         raise HTTPException(status_code=401, detail="Email o contraseña incorrecta")
 
-    # Tu modelo usa 'password' como hash (no 'password_hash')
     stored_hash = employee.password
     if not verify_password(request.password, stored_hash):
         raise HTTPException(status_code=401, detail="Email o contraseña incorrecta")
@@ -123,6 +131,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         "name": employee.name,
         "email": employee.email,
     }
+
 
 @router.post("/refresh", response_model=TokenPairResponse)
 def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):

@@ -20,6 +20,8 @@ class PaymentOut(PaymentBase):
     customer_id: Optional[int] = None
     customer_name: Optional[str] = None
     customer_province: Optional[str] = None
+    collector_id: Optional[int] = None
+    collector_name: Optional[str] = None
     class Config:
         from_attributes = True  # pydantic v2 (equiv. orm_mode=True)
 

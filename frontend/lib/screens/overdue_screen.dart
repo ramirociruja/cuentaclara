@@ -172,13 +172,17 @@ class _OverdueScreenState extends State<OverdueScreen> {
     return groups.where((g) => g.name.toLowerCase().contains(q)).toList();
   }
 
+  Color _overdueColor(int days) {
+    if (days >= 60) return Colors.redAccent;
+    if (days >= 30) return Colors.orange;
+    if (days >= 7) return Colors.amber;
+    return Colors.grey;
+  }
+
   @override
   Widget build(BuildContext ctx) {
-    // Altura del header sticky adaptada al tamaño de fuente del sistema:
-    final tsf = MediaQuery.of(ctx).textScaleFactor;
-    final extra = ((tsf - 1.0) * 28);
-    final double headerHeight =
-        128 + (extra < 0 ? 0 : (extra > 40 ? 40 : extra));
+    // Header fijo, un poco más alto para que entren bien los chips
+    const double headerHeight = 160;
 
     return Scaffold(
       appBar: AppBar(
@@ -229,7 +233,7 @@ class _OverdueScreenState extends State<OverdueScreen> {
                             ),
                           );
                         },
-                        height: headerHeight, // 👈 altura dinámica
+                        height: headerHeight,
                       ),
                     ),
                     if (_visibleGroups.isEmpty)
@@ -259,43 +263,62 @@ class _OverdueScreenState extends State<OverdueScreen> {
 
   Widget _summaryCard() {
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        child: Table(
-          columnWidths: const {0: FlexColumnWidth(1), 1: FlexColumnWidth(1)},
-          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TableRow(
-              children: [
-                _kpiCell(
-                  Icons.people_alt,
-                  clientsWithOverdue.toString(),
-                  'Clientes',
-                ),
-                _kpiCell(
-                  Icons.assignment,
-                  loansWithOverdue.toString(),
-                  'Créditos',
-                ),
-              ],
+            const Text(
+              'Resumen de mora',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-            const TableRow(
-              children: [SizedBox(height: 12), SizedBox(height: 12)],
+            const SizedBox(height: 4),
+            Text(
+              'Clientes con deuda activa: $clientsWithOverdue',
+              style: const TextStyle(color: Colors.black54, fontSize: 12),
             ),
-            TableRow(
+            const SizedBox(height: 12),
+            Table(
+              columnWidths: const {
+                0: FlexColumnWidth(1),
+                1: FlexColumnWidth(1),
+              },
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
               children: [
-                _kpiCell(
-                  Icons.event_busy,
-                  installmentsOverdue.toString(),
-                  'Cuotas',
+                TableRow(
+                  children: [
+                    _kpiCell(
+                      Icons.people_alt,
+                      clientsWithOverdue.toString(),
+                      'Clientes',
+                    ),
+                    _kpiCell(
+                      Icons.assignment,
+                      loansWithOverdue.toString(),
+                      'Créditos',
+                    ),
+                  ],
                 ),
-                _kpiCell(
-                  Icons.attach_money,
-                  _money(totalOverdue, symbol: false),
-                  'Total',
-                  emphasize: true,
+                const TableRow(
+                  children: [SizedBox(height: 12), SizedBox(height: 12)],
+                ),
+                TableRow(
+                  children: [
+                    _kpiCell(
+                      Icons.event_busy,
+                      installmentsOverdue.toString(),
+                      'Cuotas',
+                    ),
+                    _kpiCell(
+                      Icons.payments_rounded,
+                      _money(totalOverdue, symbol: true),
+                      'Total vencido',
+                      emphasize: true,
+                      valueColor: Colors.redAccent,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -311,6 +334,7 @@ class _OverdueScreenState extends State<OverdueScreen> {
     String label, {
     bool emphasize = false,
     bool alignRight = false,
+    Color? valueColor,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -330,6 +354,7 @@ class _OverdueScreenState extends State<OverdueScreen> {
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: emphasize ? 18 : 16,
+                  color: valueColor ?? Colors.black87,
                 ),
               ),
               const SizedBox(height: 2),
@@ -342,6 +367,8 @@ class _OverdueScreenState extends State<OverdueScreen> {
   }
 
   Widget _customerTile(CustomerAgg g) {
+    final color = _overdueColor(g.maxDaysOverdue);
+
     return Card(
       elevation: 1.5,
       margin: const EdgeInsets.only(bottom: 10),
@@ -364,12 +391,12 @@ class _OverdueScreenState extends State<OverdueScreen> {
               // Avatar
               CircleAvatar(
                 radius: 22,
-                backgroundColor: primary.withOpacity(.1),
+                backgroundColor: primary.withValues(alpha: 0.10),
                 child: const Icon(Icons.person, color: primary),
               ),
               const SizedBox(width: 12),
 
-              // Nombre + meta (ocupa todo el ancho disponible)
+              // Centro: nombre + meta + badge de mora
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,12 +410,31 @@ class _OverdueScreenState extends State<OverdueScreen> {
                         fontSize: 16,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Text(
-                      'Créditos: ${g.loans.length} · Cuotas: ${g.totalInstallments} · Mora máx: ${g.maxDaysOverdue}d',
-                      maxLines: 2,
+                      'Créditos: ${g.loans.length} · Cuotas: ${g.totalInstallments}',
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: _subtitleStyle,
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        'Mora máx: ${g.maxDaysOverdue} días',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: color,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -396,7 +442,7 @@ class _OverdueScreenState extends State<OverdueScreen> {
 
               const SizedBox(width: 12),
 
-              // Monto + chevron (ancho acotado para que nunca “desaparezca”)
+              // Monto + chevron
               ConstrainedBox(
                 constraints: const BoxConstraints(minWidth: 84, maxWidth: 120),
                 child: Column(
@@ -406,14 +452,13 @@ class _OverdueScreenState extends State<OverdueScreen> {
                     FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        _money(g.totalOverdue), // $ ya incluido
+                        _money(g.totalOverdue),
                         maxLines: 1,
                         overflow: TextOverflow.fade,
                         softWrap: false,
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
-                          fontSize:
-                              18, // si lo querés un toque más chico, poné 16
+                          fontSize: 16,
                         ),
                       ),
                     ),
@@ -435,32 +480,34 @@ class _OverdueScreenState extends State<OverdueScreen> {
 
   Widget _emptyStateCard() {
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 1,
+      color: Colors.green.withValues(alpha: 0.04),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Row(
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: 50,
+              height: 50,
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(.1),
+                color: Colors.green.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
                 Icons.check_circle_outline,
                 color: Colors.green,
+                size: 28,
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 16),
             const Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     'Sin cuotas vencidas',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
                   SizedBox(height: 4),
                   Text(
@@ -535,6 +582,7 @@ class _SearchSortHeader extends SliverPersistentHeaderDelegate {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
               controller: searchCtl,
@@ -552,37 +600,34 @@ class _SearchSortHeader extends SliverPersistentHeaderDelegate {
               ),
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                const Icon(Icons.filter_list, color: Colors.black54),
-                const SizedBox(width: 8),
-                const Text(
-                  'Ordenar por:',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(width: 8),
-                DropdownButton<_SortMode>(
-                  value: sort,
-                  isDense: true, // compacto
-                  onChanged: (m) {
-                    if (m != null) onSortChanged(m);
-                  },
-                  items: const [
-                    DropdownMenuItem(
-                      value: _SortMode.amount,
-                      child: Text('Monto vencido'),
-                    ),
-                    DropdownMenuItem(
-                      value: _SortMode.days,
-                      child: Text('Días de mora'),
-                    ),
-                    DropdownMenuItem(
-                      value: _SortMode.name,
-                      child: Text('Nombre'),
-                    ),
-                  ],
-                ),
-              ],
+            const Text(
+              'Ordenar por',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  ChoiceChip(
+                    label: const Text('Monto vencido'),
+                    selected: sort == _SortMode.amount,
+                    onSelected: (_) => onSortChanged(_SortMode.amount),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Días de mora'),
+                    selected: sort == _SortMode.days,
+                    onSelected: (_) => onSortChanged(_SortMode.days),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Nombre'),
+                    selected: sort == _SortMode.name,
+                    onSelected: (_) => onSortChanged(_SortMode.name),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -592,8 +637,10 @@ class _SearchSortHeader extends SliverPersistentHeaderDelegate {
 
   @override
   double get maxExtent => height;
+
   @override
   double get minExtent => height;
+
   @override
   bool shouldRebuild(covariant _SearchSortHeader old) =>
       old.sort != sort ||

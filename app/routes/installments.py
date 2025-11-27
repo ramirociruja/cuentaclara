@@ -158,6 +158,7 @@ def pay_installment(
             payment_date=payment_dt_utc,
             payment_type=payment_data.payment_type,
             description=payment_data.description,
+            collector_id=current.id,
         )
         db.add(payment_row)
         db.commit()
@@ -232,7 +233,20 @@ def get_all_installment(
     )
 
     if employee_id is not None:
-        q = q.filter(Customer.employee_id == employee_id)
+        q = q.filter(
+            or_(
+                # Cuotas de PRÉSTAMOS: usar el dueño del préstamo
+                and_(
+                    Installment.loan_id.is_not(None),
+                    Loan.employee_id == employee_id,
+                ),
+                # Cuotas de COMPRAS: seguimos usando el owner del cliente
+                and_(
+                    Installment.loan_id.is_(None),
+                    Customer.employee_id == employee_id,
+                ),
+            )
+        )
 
     # 👇 filtro por provincia (sólo si viene)
     if province:
@@ -488,7 +502,20 @@ def installments_summary(
     )
 
     if employee_id is not None:
-        base = base.filter(Customer.employee_id == employee_id)
+        base = base.filter(
+            or_(
+                # Cuotas de PRÉSTAMOS: usar el dueño del préstamo
+                and_(
+                    Installment.loan_id.is_not(None),
+                    Loan.employee_id == employee_id,
+                ),
+                # Cuotas de COMPRAS: seguimos usando el owner del cliente
+                and_(
+                    Installment.loan_id.is_(None),
+                    Customer.employee_id == employee_id,
+                ),
+            )
+        )
 
     # 👇 filtro por provincia (sólo si viene)
     if province:

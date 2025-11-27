@@ -123,6 +123,24 @@ def create_customer(
     db.refresh(obj)
     return obj
 
+
+@router.get("/", response_model=List[CustomerOut])
+def list_company_customers(
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    """
+    Lista TODOS los clientes de la empresa del usuario logueado,
+    ordenados por apellido y nombre.
+    """
+    return (
+        db.query(Customer)
+        .filter(Customer.company_id == current.company_id)
+        .order_by(Customer.last_name.asc(), Customer.first_name.asc())
+        .all()
+    )
+
+
 # ===========================
 #        GET BY ID
 # ===========================
@@ -217,10 +235,9 @@ def get_customers_by_employee(
     if not emp or emp.company_id != current.company_id:
         _404()
 
-    return db.query(Customer).filter(
-        Customer.company_id == current.company_id,
-        Customer.employee_id == employee_id
-    ).order_by(
-        Customer.last_name.asc(),
-        Customer.first_name.asc()
-    ).all()
+    return (
+        db.query(Customer)
+        .filter(Customer.company_id == current.company_id)
+        .order_by(Customer.last_name.asc(), Customer.first_name.asc())
+        .all()
+    )

@@ -30,9 +30,15 @@ ADMIN_PHONE = "3813008665"
 
 # Empleado COBRADOR
 COL_NAME  = "Agustin Diaz"
-COL_EMAIL = "Diazagustin2w@gmail.com"
+COL_EMAIL = "diazagustin2w@gmail.com"
 COL_PASS  = "123456"
 COL_PHONE = "3815216081"
+
+# Empleado cobrador 2 para testing
+COL2_NAME  = "Cobrador 2"
+COL2_EMAIL = "cobrador2@gmail.com"
+COL2_PASS  = "123456"
+COL2_PHONE = "3815216082"
 
 # =========================
 #     L Ó G I C A   S E E D
@@ -129,6 +135,16 @@ def main():
             password=COL_PASS,
             role="collector",
             phone=COL_PHONE,
+        )
+
+        get_or_create_employee(
+            db,
+            company=company,
+            name=COL2_NAME,
+            email=COL2_EMAIL,
+            password=COL2_PASS,
+            role="collector",
+            phone=COL2_PHONE,
         )
 
         log.info("✅ Seed de empresa + empleados finalizado.")

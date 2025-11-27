@@ -176,6 +176,9 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
               ],
             ),
             const SizedBox(height: 12),
+            if (loan.employeeName != null &&
+                loan.employeeName!.trim().isNotEmpty)
+              _buildDetailRow('Cobrador:', loan.employeeName!),
             _buildDetailRow(
               'Monto Total:',
               currencyFormatter.format(loan.amount),
@@ -189,6 +192,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
               currencyFormatter.format(loan.installmentAmount),
             ),
             _buildDetailRow('Inicio:', formattedDate),
+
             const SizedBox(height: 12),
             LinearProgressIndicator(
               value: progress.clamp(0.0, 1.0),

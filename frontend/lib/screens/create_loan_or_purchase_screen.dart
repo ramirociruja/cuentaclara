@@ -44,6 +44,13 @@ class _CreateLoanOrPurchaseScreenState
   DateTime? previewEndDate;
   List<Customer> customers = [];
 
+  // ---- NUEVO: manejo de cobradores ----
+  List<Map<String, dynamic>> _collectors = [];
+  int? _selectedCollectorId;
+  bool _isAdmin = false;
+  bool _loadingCollectors = false;
+  // -------------------------------------
+
   final currencyFormatter = NumberFormat.currency(
     locale: 'es_AR',
     symbol: '\$',
@@ -54,6 +61,7 @@ class _CreateLoanOrPurchaseScreenState
   void initState() {
     super.initState();
     _loadCustomers();
+    _loadCollectors(); // 👈 para dropdown de cobrador (si es admin)
     _updatePreview(); // P0#3: para que muestre preview inicial coherente
   }
 
@@ -150,10 +158,107 @@ class _CreateLoanOrPurchaseScreenState
     }
   }
 
+  // ==========================
+  //  Carga de datos remotos
+  // ==========================
+
+  Future<void> _loadCustomers() async {
+    try {
+      // NOTA: todavía usa "por empleado"; ya lo cambiaremos cuando unifiquemos clientes por empresa
+      final customerList = await ApiService.fetchCompanyCustomers();
+      if (!mounted) return;
+      setState(() => customers = customerList);
+    } catch (_) {
+      _showErrorSnackbar('Error al cargar clientes');
+    }
+  }
+
+  Future<void> _loadCollectors() async {
+    try {
+      setState(() {
+        _loadingCollectors = true;
+      });
+
+      // 1) id del empleado logueado
+      final empId = await ApiService.getEmployeeId();
+
+      // 2) empleados de la empresa (GET /employees/)
+      final rawList = await ApiService.fetchEmployeesInCompany();
+      if (!mounted) return;
+
+      // Normalizar campos: id, name, role
+      final normalized =
+          rawList
+              .whereType<Map<String, dynamic>>()
+              .map((e) {
+                final id = (e['id'] ?? e['employee_id']) as int?;
+                final name =
+                    (e['name'] ?? e['full_name'] ?? e['email'] ?? 'Empleado')
+                        as String;
+                final role = (e['role'] ?? '').toString();
+                return {'id': id, 'name': name, 'role': role};
+              })
+              .where((e) => e['id'] != null)
+              .toList();
+
+      bool isAdmin = false;
+      if (empId != null) {
+        final me = normalized.cast<Map<String, dynamic>?>().firstWhere(
+          (e) =>
+              e != null &&
+              (e['id'] as int?) != null &&
+              (e['id'] as int) == empId,
+          orElse: () => null,
+        );
+        final myRole = (me?['role'] ?? '') as String;
+        isAdmin = myRole.toLowerCase() == 'admin';
+      }
+
+      // Para el dropdown nos interesan cobradores (y opcionalmente admin)
+      final collectors =
+          normalized.where((e) {
+            final r = (e['role'] ?? '') as String;
+            final rl = r.toLowerCase();
+            // Dejamos que el admin también se pueda elegir a sí mismo
+            return rl == 'collector' || rl == 'admin';
+          }).toList();
+
+      setState(() {
+        _isAdmin = isAdmin;
+        _collectors = collectors;
+        if (isAdmin && empId != null) {
+          // Por defecto: el admin mismo como cobrador
+          _selectedCollectorId = empId;
+        } else {
+          _selectedCollectorId = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _showErrorSnackbar('Error al cargar cobradores');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingCollectors = false;
+        });
+      }
+    }
+  }
+
+  // ==========================
+  //   Crear préstamo
+  // ==========================
+
   Future<void> _createLoan() async {
     try {
       if (selectedClientId == null) {
         _showErrorSnackbar('Por favor, selecciona un cliente');
+        return;
+      }
+
+      // Si es admin, debe elegir un cobrador
+      if (_isAdmin && _selectedCollectorId == null) {
+        _showErrorSnackbar('Por favor, selecciona un cobrador');
         return;
       }
 
@@ -199,6 +304,9 @@ class _CreateLoanOrPurchaseScreenState
         description:
             _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
         collectionDay: _selectedCollectionDay,
+
+        // 👇 NUEVO: sólo el admin envía employeeId; para collectors queda null
+        employeeId: _isAdmin ? _selectedCollectorId : null,
       );
 
       final loanResponse = await ApiService.createLoan(loan);
@@ -222,6 +330,10 @@ class _CreateLoanOrPurchaseScreenState
     }
   }
 
+  // =========================
+  //   Snackbars helpers
+  // =========================
+
   void _showErrorSnackbar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -241,6 +353,10 @@ class _CreateLoanOrPurchaseScreenState
       ),
     );
   }
+
+  // =========================
+  //   Date picker
+  // =========================
 
   Future<void> _selectStartDate() async {
     final initial = _parseStartDateText() ?? DateTime.now();
@@ -268,15 +384,6 @@ class _CreateLoanOrPurchaseScreenState
         startDateController.text = DateFormat('yyyy-MM-dd').format(picked);
       });
       _updatePreview(); // P0#3: recalcular usando la nueva fecha de inicio
-    }
-  }
-
-  Future<void> _loadCustomers() async {
-    try {
-      final customerList = await ApiService.fetchCustomersByEmployee();
-      setState(() => customers = customerList);
-    } catch (_) {
-      _showErrorSnackbar('Error al cargar clientes');
     }
   }
 
@@ -331,6 +438,56 @@ class _CreateLoanOrPurchaseScreenState
           ),
         ),
       ),
+    );
+  }
+
+  // 👇 NUEVO: dropdown de cobrador (sólo visible para admin)
+  Widget _buildCollectorDropdown() {
+    if (!_isAdmin) {
+      // Los cobradores NO ven este control
+      return const SizedBox.shrink();
+    }
+
+    if (_loadingCollectors) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 8.0),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (_collectors.isEmpty) {
+      return const Text(
+        'No se encontraron cobradores en la empresa.',
+        style: TextStyle(fontSize: 12, color: Colors.black54),
+      );
+    }
+
+    return DropdownButtonFormField<int>(
+      value: _selectedCollectorId,
+      decoration: InputDecoration(
+        labelText: 'Cobrador asignado',
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      items:
+          _collectors.map((c) {
+            final id = (c['id'] as int);
+            final name = (c['name'] as String?) ?? 'Empleado $id';
+            final role = (c['role'] as String?)?.toLowerCase();
+            String label = name;
+            if (role == 'admin') {
+              label = '$name (Admin)';
+            } else if (role == 'collector') {
+              label = '$name (Cobrador)';
+            }
+            return DropdownMenuItem<int>(value: id, child: Text(label));
+          }).toList(),
+      onChanged: (value) {
+        setState(() {
+          _selectedCollectorId = value;
+        });
+      },
     );
   }
 
@@ -631,6 +788,8 @@ class _CreateLoanOrPurchaseScreenState
                           const SizedBox(height: 16),
                           _buildCustomerDropdown(),
                           const SizedBox(height: 16),
+                          _buildCollectorDropdown(), // 👈 NUEVO
+                          if (_isAdmin) const SizedBox(height: 16),
                           _buildAmountInput(),
                           const SizedBox(height: 16),
                           _buildInstallmentsInput(),

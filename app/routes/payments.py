@@ -48,23 +48,12 @@ def get_payments_summary(
     date_to:   Optional[str] = Query(None, alias="date_to"),
     start_date: Optional[str] = Query(None, alias="start_date"),
     end_date:   Optional[str] = Query(None, alias="end_date"),
-    employee_id: Optional[int] = Query(None),
+    employee_id: Optional[int] = Query(None),  # <- ahora será el collector_id
     province: Optional[str] = Query(None),
     tz: Optional[str] = Query(None),   # zona horaria del usuario (default AR)
     db: Session = Depends(get_db),
-    current: Employee = Depends(get_current_user),   # tu dependencia actual
+    current: Employee = Depends(get_current_user),
 ):
-    """
-    Resumen de pagos:
-      - total_amount: suma de pagos NO anulados en el rango (scope por company)
-      - by_day: lista (fecha_local, monto) dentro del rango (agrupado por día LOCAL)
-      - Filtros opcionales: employee_id, province, tz
-    """
-
-    # --------- Normalización de rango ---------
-    # El front puede mandar:
-    #   a) fechas (YYYY-MM-DD) → queremos semana local → ventana UTC [start, end)
-    #   b) timestamps ISO (con hora/offset) → usamos esos instantes (y hacemos end exclusivo si aplica)
     raw_from = date_from or start_date
     raw_to   = date_to   or end_date
     zone = ZoneInfo(tz) if tz else AR_TZ
@@ -72,28 +61,20 @@ def get_payments_summary(
     start_utc: Optional[datetime] = None
     end_utc_excl: Optional[datetime] = None
 
-    # ¿son DATEs (yyyy-mm-dd) sin hora?
     def _looks_like_date(s: Optional[str]) -> bool:
-        if not s: return False
-        # formato simple YYYY-MM-DD
+        if not s:
+            return False
         return len(s) == 10 and s[4] == '-' and s[7] == '-'
 
     if raw_from and raw_to and _looks_like_date(raw_from) and _looks_like_date(raw_to):
-        # caso (a): fechas locales → ventana UTC
         dfrom = date.fromisoformat(raw_from)
         dto   = date.fromisoformat(raw_to)
         start_utc, end_utc_excl = _local_dates_to_utc_window(dfrom, dto, zone)
     else:
-        # caso (b): timestamps → parse aware UTC
         start_utc = parse_iso_aware_utc(raw_from)
         end_utc   = parse_iso_aware_utc(raw_to)
-        # hacemos fin exclusivo si vino fin “al final del día” sin hora explícita (poco común aquí),
-        # o si simplemente queremos cerrar media-open intervals.
-        end_utc_excl = end_utc  # si querés forzar exclusividad siempre, dejá esta línea
-        # (opcional) si end_utc no es None y querés garantizar exclusividad por seguridad:
-        # if end_utc is not None: end_utc_excl = end_utc
+        end_utc_excl = end_utc
 
-    # --------- Base de consulta ---------
     L  = aliased(Loan)
     P  = aliased(Purchase)
     CL = aliased(Customer)
@@ -105,7 +86,7 @@ def get_payments_summary(
           .outerjoin(CL, L.customer_id == CL.id)
           .outerjoin(P, Payment.purchase_id == P.id)
           .outerjoin(CP, P.customer_id == CP.id)
-          .filter(Payment.is_voided == False)  # excluir pagos anulados
+          .filter(Payment.is_voided == False)
           .filter(or_(CL.company_id == current.company_id,
                       CP.company_id == current.company_id))
     )
@@ -113,23 +94,19 @@ def get_payments_summary(
     if start_utc is not None:
         base = base.filter(Payment.payment_date >= start_utc)
     if end_utc_excl is not None:
-        base = base.filter(Payment.payment_date <  end_utc_excl)  # 👈 fin exclusivo
+        base = base.filter(Payment.payment_date < end_utc_excl)
 
+    # 🔴 CAMBIO CLAVE: ahora filtra por collector_id
     if employee_id is not None:
-        base = base.filter(or_(CL.employee_id == employee_id,
-                               CP.employee_id == employee_id))
+        base = base.filter(Payment.collector_id == employee_id)
 
     if province:
         base = base.filter(or_(CL.province == province,
                                CP.province == province))
 
-    # --------- total ---------
     total_q = base.with_entities(func.coalesce(func.sum(Payment.amount), 0.0))
     total = float(total_q.scalar() or 0.0)
 
-    # --------- by_day (agrupado por DÍA LOCAL) ---------
-    # Postgres: usamos timezone('<tz>', timestamptz) para ver el "día local".
-    # date(timezone(...)) → DATE en la zona del usuario.
     tzname = (tz or "America/Argentina/Buenos_Aires")
     day_local = func.date(func.timezone(tzname, Payment.payment_date))
     by_day_rows = (
@@ -143,15 +120,8 @@ def get_payments_summary(
     )
     by_day = [{"date": r.day, "amount": float(r.amount)} for r in by_day_rows]
 
-    # --- Si NO usás Postgres, hacé el group-by en Python:
-    # rows = base.with_entities(Payment.payment_date, Payment.amount).all()
-    # agg: dict[date, float] = {}
-    # for dt_utc, amt in rows:
-    #     d_local = dt_utc.astimezone(zone).date()
-    #     agg[d_local] = agg.get(d_local, 0.0) + float(amt or 0.0)
-    # by_day = [{"date": d, "amount": v} for d, v in sorted(agg.items())]
-
     return PaymentsSummaryResponse(total_amount=total, by_day=by_day)
+
 
 
 # Register a new payment
@@ -191,6 +161,7 @@ def create_payment(
         purchase_id=payment.purchase_id,
         payment_type=payment.payment_type,
         description=payment.description,
+        collector_id=current.id,
     )
 
     db.add(new_p)
@@ -236,7 +207,6 @@ def mark_next_installment_pending(db: Session, loan_id: int = None, purchase_id:
 
 # Get all payments
 @router.get("/", response_model=list[PaymentOut])
-@router.get("/", response_model=list[PaymentOut])
 def list_payments(
     start_date: str | None = Query(None),
     end_date: str | None = Query(None),
@@ -279,7 +249,7 @@ def list_payments(
               joinedload(Payment.loan).joinedload(Loan.customer),
               joinedload(Payment.purchase).joinedload(Purchase.customer),
           )
-          .filter(Payment.is_voided == False)  # 👈 excluye anulados
+          .filter(Payment.is_voided == False)
           .filter(
               or_(
                   CL.company_id == current.company_id,
@@ -293,10 +263,10 @@ def list_payments(
     if end_utc_excl is not None:
         q = q.filter(Payment.payment_date < end_utc_excl)
 
+    # 🔴 AQUÍ el cambio: usar collector_id
     if employee_id is not None:
-        q = q.filter(or_(CL.employee_id == employee_id, CP.employee_id == employee_id))
+        q = q.filter(Payment.collector_id == employee_id)
 
-    # 👇 Filtro OPCIONAL por provincia (solo si viene)
     if province:
         q = q.filter(or_(CL.province == province, CP.province == province))
 
@@ -304,7 +274,6 @@ def list_payments(
 
     out: list[PaymentOut] = []
     for p in rows:
-        # resolvemos loan/purchase y su customer
         loan = p.loan
         purch = p.purchase
         cust = (loan.customer if loan else None) or (purch.customer if purch else None)
@@ -317,10 +286,11 @@ def list_payments(
             purchase_id=p.purchase_id,
             payment_type=p.payment_type,
             description=p.description,
-            # 👇 enriquecidos para el front
             customer_id=cust.id if cust else None,
             customer_name=(f"{(cust.last_name or '').strip()} {(cust.first_name or '').strip()}".strip() if cust else None),
             customer_province=(cust.province if cust else None),
+            collector_id=p.collector_id,
+            collector_name=p.collector.name if p.collector else None,
         ))
 
     return out
@@ -376,7 +346,7 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
             company_name = current.company.name
             company_cuit = getattr(current.company, "cuit", None)
 
-    collector_name = current.name if getattr(current, "name", None) else current.email
+    collector_name = payment.collector.name if payment.collector else None
 
     return {
         "customer_name": customer_name,
@@ -676,10 +646,20 @@ def list_payments_by_customer(
         .filter(or_(CL.id == customer_id, CP.id == customer_id))
     )
 
+    # 👉 Solo el admin ve TODO. El resto, solo lo que le pertenece.
+    if current.role != "admin":
+        q = q.filter(
+            or_(
+                Payment.collector_id == current.id,  # pagos que él registró
+                L.employee_id == current.id,         # préstamos que él dio
+                P.employee_id == current.id,         # ventas que él dio
+            )
+        )
+
     if start_utc is not None:
         q = q.filter(Payment.payment_date >= start_utc)
     if end_utc_excl is not None:
-        q = q.filter(Payment.payment_date < end_utc_excl)  # fin exclusivo
+        q = q.filter(Payment.payment_date < end_utc_excl)
 
     rows = q.order_by(Payment.payment_date.desc(), Payment.id.desc()).all()
 
@@ -692,8 +672,8 @@ def list_payments_by_customer(
             purchase_id=p.purchase_id,
             payment_type=p.payment_type,
             description=p.description,
+            collector_id=p.collector_id,
+            collector_name=(p.collector.name if p.collector else None),
         )
         for p in rows
     ]
-
-

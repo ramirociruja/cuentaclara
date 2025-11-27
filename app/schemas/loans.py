@@ -12,6 +12,7 @@ class LoansBase(BaseModel):
     start_date: Optional[datetime] = None
     status: Optional[str] = None
     company_id: int
+    employee_id: Optional[int] = None
 
     # NUEVOS
     description: Optional[str] = None
@@ -41,6 +42,7 @@ class LoansOut(LoansBase):
     total_due: float
     installments: List[InstallmentOut] = []
     company_id: Optional[int] = None
+    employee_name: Optional[str] = None
 
     class Config:
         from_attributes = True  # pydantic v2 (equiv. a orm_mode=True)

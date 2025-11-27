@@ -19,12 +19,14 @@ class _CustomersScreenState extends State<CustomersScreen> {
   int? _employeeId;
 
   String searchQuery = '';
-  bool showOnlyDebtors = false;
+  bool showOnlyDebtors = false; // lo dejamos por si después lo usás
+  bool showOnlyMyCredits = false; // 👈 NUEVO toggle
   bool isLoading = true;
   bool isRefreshing = false;
 
   List<Customer> customers = [];
   Map<int, bool> hasOverdueInstallments = {};
+  Map<int, bool> hasLoansWithMe = {}; // 👈 clientes con créditos del empleado
 
   @override
   void initState() {
@@ -62,10 +64,10 @@ class _CustomersScreenState extends State<CustomersScreen> {
         isRefreshing = false;
       });
 
-      // 1) Clientes del cobrador
+      // 1) Clientes (según tu endpoint actual)
       final fetchedCustomers = await ApiService.fetchCustomersByEmployee();
 
-      // 2) Índice de clientes con cuotas VENCIDAS
+      // 2) Índice de clientes con cuotas VENCIDAS (para el chip rojo)
       final overdueItems = await ApiService.fetchInstallmentsEnriched(
         employeeId: _employeeId,
         dateFrom: null,
@@ -77,13 +79,28 @@ class _CustomersScreenState extends State<CustomersScreen> {
           if (r.customerId != null) r.customerId!,
       };
 
+      // 3) Clientes que tienen al menos un crédito con el empleado logueado
+      final myLoans = await ApiService.fetchLoansByEmployeeAll(
+        employeeId: _employeeId!,
+      );
+      final customerIdsWithMyLoans = <int>{
+        for (final loan in myLoans) loan.customerId,
+      };
+
       if (!mounted) return; // ✅ guard antes de setState
       setState(() {
         customers = fetchedCustomers;
+
         hasOverdueInstallments = {
           for (final c in fetchedCustomers)
             c.id: overdueCustomerIds.contains(c.id),
         };
+
+        hasLoansWithMe = {
+          for (final c in fetchedCustomers)
+            c.id: customerIdsWithMyLoans.contains(c.id),
+        };
+
         isLoading = false;
       });
     } catch (e) {
@@ -111,8 +128,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
     return customers.where((c) {
       final q = searchQuery.trim().toLowerCase();
       final matchesQuery = q.isEmpty || c.fullName.toLowerCase().contains(q);
+
       final isDebtor = hasOverdueInstallments[c.id] ?? false;
-      return matchesQuery && (!showOnlyDebtors || isDebtor);
+      final hasMyCredit = hasLoansWithMe[c.id] ?? false;
+
+      return matchesQuery &&
+          (!showOnlyDebtors || isDebtor) &&
+          (!showOnlyMyCredits || hasMyCredit);
     }).toList();
   }
 
@@ -195,6 +217,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
                   // Resumen + Filtro
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       // Resumen
                       Expanded(
@@ -204,11 +227,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
                             vertical: 8,
                           ),
                           decoration: BoxDecoration(
-                            // was: primaryColor.withOpacity(.06)
                             color: primaryColor.withValues(alpha: .06), // ✅
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              // was: primaryColor.withOpacity(.18)
                               color: primaryColor.withValues(alpha: .18), // ✅
                             ),
                           ),
@@ -255,6 +276,30 @@ class _CustomersScreenState extends State<CustomersScreen> {
                       ),
 
                       const SizedBox(width: 8),
+
+                      // 👇 NUEVO: Toggle "Sólo mis créditos"
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'Sólo mis créditos',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Switch(
+                            value: showOnlyMyCredits,
+                            activeColor: primaryColor,
+                            onChanged: (v) {
+                              setState(() {
+                                showOnlyMyCredits = v;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ],
@@ -297,7 +342,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
     final hasDebt = hasOverdueInstallments[customer.id] ?? false;
 
     final sideColor =
-        // was: dangerColor.withOpacity(.35)
         hasDebt
             ? dangerColor.withValues(alpha: .35)
             : Colors.grey.shade300; // ✅
@@ -333,7 +377,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
               // Avatar
               CircleAvatar(
                 radius: 22,
-                // was: primaryColor.withOpacity(.1)
                 backgroundColor: primaryColor.withValues(alpha: .1), // ✅
                 child: const Icon(Icons.person, color: primaryColor),
               ),
@@ -414,7 +457,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        // was: bg.withOpacity(.12)
         color: bg.withValues(alpha: .12), // ✅
         borderRadius: BorderRadius.circular(8),
       ),
@@ -452,7 +494,6 @@ class _CustomersScreenState extends State<CustomersScreen> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                // was: okColor.withOpacity(.1)
                 color: okColor.withValues(alpha: .1), // ✅
                 shape: BoxShape.circle,
               ),

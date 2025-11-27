@@ -148,18 +148,33 @@ def loans_summary(
         end_utc   = parse_iso_aware_utc(date_to)
         end_utc_excl = end_utc
 
-    q = db.query(Loan)
+        q = db.query(Loan)
 
-    needs_customer = (employee_id is not None) or (province is not None) or (not hasattr(Loan, "company_id"))
+    # 👇 Regla de visibilidad por rol:
+    # - collector: siempre ve SOLO sus préstamos (employee_id = current.id)
+    # - admin/manager: puede ver todos o filtrar por employee_id explícito
+    effective_employee_id: int | None = employee_id
+    if current.role == "collector":
+        # Ignoramos cualquier employee_id que venga por query
+        effective_employee_id = current.id
+
+    # Necesitamos join con Customer SOLO si filtramos por provincia
+    needs_customer = (province is not None) or (not hasattr(Loan, "company_id"))
+
     if hasattr(Loan, "company_id") and not needs_customer:
         q = q.filter(Loan.company_id == current.company_id)
     else:
-        q = q.join(Customer, Loan.customer_id == Customer.id)\
+        q = (
+            q.join(Customer, Loan.customer_id == Customer.id)
              .filter(Customer.company_id == current.company_id)
-        if employee_id is not None:
-            q = q.filter(Customer.employee_id == employee_id)
+        )
         if province is not None:
             q = q.filter(Customer.province == province)
+
+    # Filtro por cobrador (a nivel Loan)
+    if effective_employee_id is not None:
+        q = q.filter(Loan.employee_id == effective_employee_id)
+
 
     # ✅ filtro por préstamos efectivos sin tocar Installment
     q = q.filter(loan_is_effective_for_loans(Loan))
@@ -253,23 +268,30 @@ def list_loans(
     # ============================================================
     # 1) SUBQUERY de IDs (sin ORDER BY ni DISTINCT ON problemático)
     # ============================================================
-    needs_customer = (employee_id is not None) or (province is not None) or (not hasattr(Loan, "company_id"))
+        # 👇 Regla de visibilidad por rol:
+    # - collector: solo ve sus préstamos
+    # - admin/manager: puede ver todos o filtrar por employee_id
+    effective_employee_id: Optional[int] = employee_id
+    if current.role == "collector":
+        effective_employee_id = current.id
+
+    needs_customer = (province is not None) or (not hasattr(Loan, "company_id"))
 
     base_ids = db.query(Loan.id)
 
-    if hasattr(Loan, "company_id") and not needs_customer:
-        # Podemos filtrar por empresa directamente en Loan sin join
-        base_ids = base_ids.filter(Loan.company_id == current.company_id)
-    else:
-        # Necesitamos Customer para filtrar por company/employee/province
-        base_ids = (
-            base_ids.join(Customer, Loan.customer_id == Customer.id)
-                    .filter(Customer.company_id == current.company_id)
-        )
-        if employee_id is not None:
-            base_ids = base_ids.filter(Customer.employee_id == employee_id)
+    # Siempre filtramos por empresa usando Loan.company_id (ya existe)
+    base_ids = base_ids.filter(Loan.company_id == current.company_id)
+
+    # Join con Customer solo si hace falta por provincia
+    if needs_customer:
+        base_ids = base_ids.join(Customer, Loan.customer_id == Customer.id)
         if province is not None:
             base_ids = base_ids.filter(Customer.province == province)
+
+    # Filtro por cobrador a nivel Loan
+    if effective_employee_id is not None:
+        base_ids = base_ids.filter(Loan.employee_id == effective_employee_id)
+
 
     # Excluir loans cancel/refinanced (usa sólo columnas de Loan)
     base_ids = base_ids.filter(loan_is_effective_for_loans(Loan))
@@ -350,11 +372,50 @@ def create_loan(
     # Guardar start_date en UTC en la Loan
     start_date_utc = start_local.astimezone(timezone.utc)
 
+    # === 2) Determinar el cobrador (employee_id del préstamo) ===
+    # Regla:
+    # - Si es collector: siempre él mismo.
+    # - Si es admin/manager: puede elegir employee_id en el payload.
+    target_employee_id: int
+
+    role = (current.role or "").lower()
+
+    if role == "collector":
+        # El cobrador siempre es el usuario logueado
+        target_employee_id = current.id
+    else:
+        # Admin/manager: puede elegir un cobrador
+        # (loan.employee_id viene del frontend; es opcional)
+        requested_emp_id = getattr(loan, "employee_id", None)
+
+        if requested_emp_id is not None:
+            # Validar que el empleado exista y sea de la misma empresa
+            target_emp = (
+                db.query(Employee)
+                .filter(
+                    Employee.id == requested_emp_id,
+                    Employee.company_id == current.company_id,
+                )
+                .first()
+            )
+            if not target_emp:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Empleado inválido o de otra empresa para este préstamo",
+                )
+            target_employee_id = target_emp.id
+        else:
+            # Si el admin no envía employee_id, el préstamo queda a su nombre
+            target_employee_id = current.id
+
+    # === 3) Crear el Loan ===
     new_loan = Loan(
-        **loan.model_dump(exclude={"installments", "start_date", "company_id"}),
+        # Excluimos company_id (si lo mandan) y employee_id (lo definimos nosotros)
+        **loan.model_dump(exclude={"installments", "start_date", "company_id", "employee_id"}),
         start_date=start_date_utc,
         total_due=loan.amount,
         company_id=current.company_id,
+        employee_id=target_employee_id,  # 👈 dueño del crédito
     )
 
     # installment_amount
@@ -366,7 +427,7 @@ def create_loan(
     db.commit()
     db.refresh(new_loan)
 
-    # === 2) Crear cuotas en base a start_local ===
+    # === 4) Crear cuotas en base a start_local ===
     for i in range(loan.installments_count):
         if loan.frequency == "weekly":
             # sumamos semanas desde la FECHA LOCAL de inicio
@@ -405,6 +466,7 @@ def create_loan(
 
 
 
+
 # ============== LIST BY CUSTOMER ==============
 @router.get("/customer/{customer_id}", response_model=list[LoansOut])
 def get_loans_by_customer(
@@ -417,9 +479,14 @@ def get_loans_by_customer(
     zone = ZoneInfo(tz) if tz else AR_TZ
     today_local = datetime.now(zone).date()
 
-    q = db.query(Loan).filter(Loan.customer_id == customer_id)
-    if hasattr(Loan, "company_id"):
-        q = q.filter(Loan.company_id == current.company_id)
+    q = db.query(Loan).filter(
+        Loan.customer_id == customer_id,
+        Loan.company_id == current.company_id,
+    )
+
+    # 👇 Regla por rol
+    if current.role == "collector":
+        q = q.filter(Loan.employee_id == current.id)
 
     loans = q.all()
     if not loans:
@@ -458,6 +525,7 @@ def get_loans_by_customer(
             status=loan.status,
             company_id=getattr(loan, "company_id", None),
             installments=installments_out,
+            employee_name=loan.employee.name if loan.employee else None,
         ))
 
     return loan_outs
@@ -488,15 +556,17 @@ def get_loans_by_employee(
         end_utc   = parse_iso_aware_utc(date_to)
         end_utc_excl = end_utc
 
-    q = db.query(Loan)
-    if hasattr(Loan, "company_id"):
-        q = q.filter(Loan.company_id == current.company_id)
-    else:
-        q = q.join(Customer, Loan.customer_id == Customer.id)\
-             .filter(Customer.company_id == current.company_id)
+    q = db.query(Loan).filter(Loan.company_id == current.company_id)
 
-    q = q.join(Customer, Loan.customer_id == Customer.id)\
-         .filter(Customer.employee_id == employee_id)
+    # 👇 Regla por rol:
+    # - collector: ignoramos employee_id de la query y usamos current.id
+    # - admin/manager: usamos el employee_id pasado en la query
+    if current.role == "collector":
+        effective_employee_id = current.id
+    else:
+        effective_employee_id = employee_id
+
+    q = q.filter(Loan.employee_id == effective_employee_id)
 
     if start_utc is not None:
         q = q.filter(Loan.start_date >= start_utc)
@@ -707,6 +777,8 @@ def pay_loan_installments(
 
     remaining_amount = payment.amount_paid
     cuotas_afectadas = 0
+
+    # ---- aplicar pago en cuotas ----
     for inst in unpaid_installments:
         if remaining_amount <= 0:
             break
@@ -719,25 +791,36 @@ def pay_loan_installments(
     if applied_amount <= 0:
         raise HTTPException(status_code=400, detail="No se aplicó ningún pago")
 
-    # Registrar Payment
+    # ---- Determinar collector_id ----
+    # 1. Por defecto: el usuario logueado que está cobrando
+    collector_id = current.id
+
+    # 2. Si este payment es legacy o por cualquier razón viene null, usar el cobrador del préstamo
+    if not collector_id:
+        collector_id = loan.employee_id
+
+    # ---- Registrar Payment ----
     payment_row = Payment(
         amount=float(applied_amount),
         loan_id=loan.id,
         purchase_id=None,
         payment_date=datetime.now(timezone.utc),
         payment_type=payment.payment_type,
-        description=(payment.description or "").strip() or None
+        description=(payment.description or "").strip() or None,
+        collector_id=collector_id
     )
+
     db.add(payment_row)
 
-    # Actualizar saldo y (si queda en 0) estado del préstamo
+    # ---- Actualizar saldo del loan ----
     loan.total_due = max(loan.total_due - applied_amount, 0.0)
     if loan.total_due == 0:
-        loan.status = LoanStatus.PAID.value  # 👈 canónico
+        loan.status = LoanStatus.PAID.value
 
     db.commit()
+
+    # ---- Ledger + status ----
     try:
-        # recalcula paid_amount/status de cuotas y CREA PaymentAllocation
         recompute_ledger_for_loan(db, loan_id)
         db.commit()
         update_status_if_fully_paid(db, loan_id=loan_id, purchase_id=None)
@@ -752,6 +835,7 @@ def pay_loan_installments(
         "saldo_pendiente": loan.total_due,
         "cuotas_afectadas": cuotas_afectadas
     }
+
 
 # ============== GET ONE ==============
 @router.get("/{loan_id}", response_model=LoansOut)

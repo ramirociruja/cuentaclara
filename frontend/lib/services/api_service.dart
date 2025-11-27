@@ -523,6 +523,33 @@ class ApiService {
     }
   }
 
+  static Future<List<Customer>> fetchCompanyCustomers() async {
+    final url = Uri.parse('$baseUrl/customers/');
+
+    try {
+      final response = await _get(url);
+      if (response.statusCode == 200) {
+        final List<dynamic> data = _json(response) as List<dynamic>;
+        return data
+            .map(
+              (customer) => Customer.fromJson(customer as Map<String, dynamic>),
+            )
+            .toList();
+      } else {
+        // ignore: avoid_print
+        print(
+          'Error al obtener los clientes de la empresa: ${response.statusCode}',
+        );
+        throw Exception('Failed to load company customers');
+      }
+    } catch (e) {
+      if (e is SessionExpiredException) rethrow;
+      // ignore: avoid_print
+      print('Error de red al obtener clientes de la empresa: $e');
+      throw Exception('Failed to load company customers');
+    }
+  }
+
   // Crear cliente
   static Future<ApiResult<Customer>> createCustomer(Customer customer) async {
     final url = Uri.parse('$baseUrl/customers/');
@@ -1094,6 +1121,26 @@ class ApiService {
     throw Exception('No se pudo obtener el listado de créditos');
   }
 
+  // 👉 Todos los créditos del empleado (sin rango de fechas)
+  static Future<List<Loan>> fetchLoansByEmployeeAll({
+    required int employeeId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/loans/by-employee?employee_id=$employeeId');
+
+    final resp = await _get(uri);
+
+    if (resp.statusCode == 200) {
+      final List data = jsonDecode(utf8.decode(resp.bodyBytes)) as List;
+      return data.map((e) => Loan.fromJson(e as Map<String, dynamic>)).toList();
+    } else if (resp.statusCode == 404) {
+      return <Loan>[]; // sin créditos
+    }
+
+    throw Exception(
+      'No se pudo obtener el listado de créditos del empleado (HTTP ${resp.statusCode})',
+    );
+  }
+
   static Future<CreditsSummary> fetchCreditsSummary({
     required int employeeId,
     required DateTime dateFrom,
@@ -1356,6 +1403,22 @@ class ApiService {
       if (j is Map<String, dynamic>) return j;
     }
     return null;
+  }
+
+  /// Devuelve la lista de empleados de la empresa del usuario actual.
+  /// Backend esperado: GET /employees/ (filtrado por company via backend).
+  static Future<List<Map<String, dynamic>>> fetchEmployeesInCompany() async {
+    final uri = Uri.parse('$baseUrl/employees/');
+    final res = await _get(uri);
+
+    if (res.statusCode == 200) {
+      final j = _json(res);
+      if (j is List) {
+        return j.whereType<Map<String, dynamic>>().toList();
+      }
+    }
+
+    return <Map<String, dynamic>>[];
   }
 
   /// Devuelve la empresa por ID (mapa simple).
