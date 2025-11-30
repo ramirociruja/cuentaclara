@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # Routers (usar imports absolutos para evitar issues según cómo se ejecute uvicorn)
-from app.routes import admin_license, customers, employees, loans, installments, purchases, payments, companies, tasks
+from app.routes import admin_license, customers, employees, loans, installments, purchases, payments, companies, tasks, superadmin
 from app.utils.auth import router as auth_router  # Router de autenticación
 
 # -----------------------------------------------------------------------------
@@ -135,3 +135,4 @@ app.include_router(companies.router,     prefix="/companies",     tags=["Compani
 app.include_router(tasks.router)
 app.include_router(auth_router)
 app.include_router(admin_license.router, tags=["Admin"])
+app.include_router(superadmin.router)
