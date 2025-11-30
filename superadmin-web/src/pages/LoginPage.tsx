@@ -6,7 +6,7 @@ import { api } from "../api/client";
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("superadmin@cuentaclara.com"); // poné lo que uses
+  const [email, setEmail] = useState("superadmin@cuentaclara.com");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -17,14 +17,12 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // Ajustá esta ruta a TU endpoint real de login
-      const resp = await api.post("/auth/login", {
-        username: email,
+      // TU backend usa email + password (NO username)
+      const resp = await api.post("/login", {
+        email: email,
         password: password,
       });
 
-      // Ajustá esto a la respuesta real de tu backend.
-      // Lo típico: { access_token: "...", token_type: "bearer" }
       const token = resp.data.access_token as string | undefined;
 
       if (!token) {
@@ -33,7 +31,6 @@ export default function LoginPage() {
 
       localStorage.setItem("token", token);
 
-      // A futuro podrías chequear que el usuario tenga rol super_admin.
       navigate("/companies");
     } catch (err: any) {
       console.error(err);
@@ -68,9 +65,7 @@ export default function LoginPage() {
         </h1>
 
         <label style={{ display: "block", marginBottom: "0.75rem" }}>
-          <span style={{ display: "block", marginBottom: "0.25rem" }}>
-            Email
-          </span>
+          <span style={{ display: "block", marginBottom: "0.25rem" }}>Email</span>
           <input
             type="email"
             value={email}

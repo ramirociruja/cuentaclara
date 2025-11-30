@@ -6,7 +6,7 @@ import { api } from "../api/client";
 interface Company {
   id: number;
   name: string;
-  status?: string | null;
+  service_status?: string | null;
   license_expires_at?: string | null;
 }
 
@@ -39,8 +39,7 @@ export default function CompaniesPage() {
       await api.post(`/superadmin/companies/${id}/extend-license`, {
         days: 30,
       });
-      // refrescamos la lista
-      fetchCompanies();
+      fetchCompanies(); // refrescar
     } catch (err: any) {
       console.error(err);
       alert("No se pudo extender la licencia.");
@@ -111,7 +110,7 @@ export default function CompaniesPage() {
               <tr key={c.id}>
                 <td style={tdStyle}>{c.id}</td>
                 <td style={tdStyle}>{c.name}</td>
-                <td style={tdStyle}>{c.status ?? "-"}</td>
+                <td style={tdStyle}>{c.service_status ?? "-"}</td>
                 <td style={tdStyle}>
                   {c.license_expires_at
                     ? new Date(c.license_expires_at).toLocaleDateString(

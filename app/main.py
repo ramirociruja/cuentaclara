@@ -73,21 +73,25 @@ app = FastAPI(lifespan=lifespan)
 # -----------------------------------------------------------------------------
 # CORS por entorno
 # -----------------------------------------------------------------------------
-ENV = os.getenv("ENV", "dev").lower()
-_raw = os.getenv("CORS_ORIGINS", "")
-ALLOWED_ORIGINS = [o.strip() for o in _raw.split(",") if o.strip()]
+# ENV = os.getenv("ENV", "dev").lower()
+# _raw = os.getenv("CORS_ORIGINS", "")
+# ALLOWED_ORIGINS = [o.strip() for o in _raw.split(",") if o.strip()]
 
-if ENV == "prod":
-    if not ALLOWED_ORIGINS:
-        print("⚠️  CORS_ORIGINS vacío en prod (permitido porque solo app móvil accede a la API).")
-        ALLOWED_ORIGINS = []
-    elif any(o == "*" for o in ALLOWED_ORIGINS):
-        raise RuntimeError('En prod, CORS_ORIGINS no puede contener "*". Definí dominios explícitos.')
-    allow_credentials = False
-else:
-    if not ALLOWED_ORIGINS:
-        ALLOWED_ORIGINS = ["*"]
-    allow_credentials = False
+# if ENV == "prod":
+#     if not ALLOWED_ORIGINS:
+#         print("⚠️  CORS_ORIGINS vacío en prod (permitido porque solo app móvil accede a la API).")
+#         ALLOWED_ORIGINS = []
+#     elif any(o == "*" for o in ALLOWED_ORIGINS):
+#         raise RuntimeError('En prod, CORS_ORIGINS no puede contener "*". Definí dominios explícitos.')
+#     allow_credentials = False
+# else:
+#     if not ALLOWED_ORIGINS:
+#         ALLOWED_ORIGINS = ["*"]
+#     allow_credentials = False
+
+
+ALLOWED_ORIGINS = ["*"]  # 🔥 mientras desarrollás, todo permitido
+allow_credentials = False
 
 app.add_middleware(
     CORSMiddleware,
