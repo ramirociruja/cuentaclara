@@ -42,6 +42,7 @@ class Customer(Base):
     loans     = relationship("Loan", back_populates="customer", lazy="selectin")
     purchases = relationship("Purchase", back_populates="customer", lazy="selectin")
 
+
     @property
     def full_name(self) -> str:
         # helper útil para mostrar en recibos u otras vistas
@@ -79,6 +80,8 @@ class Employee(Base):
     company = relationship("Company", back_populates="employees")  # Relación bidireccional
     customers = relationship("Customer", back_populates="employee")  # Relación inversa
     loans = relationship("Loan", back_populates="employee")
+    purchases = relationship("Purchase", back_populates="employee")
+
 
 
 class Loan(Base):
@@ -121,26 +124,46 @@ class Purchase(Base):
     __tablename__ = "purchases"
 
     id = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"))
-    product_name = Column(String, nullable=False)
+
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False, index=True)
+    company_id  = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+
+    # Monto base de la venta (equivalente a Loan.amount)
     amount = Column(Float, nullable=False)
+
+    # Total a pagar (puede ser = amount si no hay recargo/financiación)
     total_due = Column(Float, nullable=False)
-    installments_count = Column(Integer, nullable=False)
-    installment_amount = Column(Float, nullable=False)
-    frequency = Column(String, nullable=False)  # "weekly" or "monthly"
+
+    installments_count  = Column(Integer, nullable=False)
+    installment_amount  = Column(Float, nullable=False)
+    frequency           = Column(String, nullable=False)  # "weekly" | "monthly"
+
     start_date = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-    status = Column(String, default=LoanStatus.ACTIVE.value)  # "active", "paid", "defaulted"
-    
-    company_id = Column(Integer, ForeignKey('companies.id'))
-    
-    company = relationship("Company", back_populates="purchases")  # Relación bidireccional
+
+    status = Column(String, default=LoanStatus.ACTIVE.value)  # "active","paid","defaulted"
+
+    # Equivalentes a Loan
+    description    = Column(String, nullable=True)
+    collection_day = Column(Integer, nullable=True)  # 1..7 (ISO)
+
+    # (Opcional) si querés conservarlo explícito
+    product_name = Column(String, nullable=True)
+
+    company  = relationship("Company", back_populates="purchases")
     customer = relationship("Customer", back_populates="purchases")
-    payments = relationship("Payment", back_populates="purchase")
-    installments = relationship("Installment", back_populates="purchase", cascade="all, delete-orphan")
+    employee = relationship("Employee", back_populates="purchases")
+
+    payments      = relationship("Payment", back_populates="purchase")
+    installments  = relationship("Installment", back_populates="purchase", cascade="all, delete-orphan")
+
+    @property
+    def employee_name(self):
+        return self.employee.name if self.employee else None
 
 
 class Payment(Base):
@@ -275,3 +298,28 @@ class PaymentAllocation(Base):
     installment = relationship("Installment", backref="allocations")
 
     
+
+
+# app/models/onboarding_import.py
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from app.database.db import Base
+from datetime import datetime, timezone
+import uuid
+
+class OnboardingImportSession(Base):
+    __tablename__ = "onboarding_import_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    original_filename = Column(String(255), nullable=True)
+    status = Column(String(32), nullable=False, default="validated")
+
+    payload_json = Column(JSONB, nullable=False)   # rows normalizados (customers/loans/payments)
+    summary_json = Column(JSONB, nullable=False)
+    errors_json = Column(JSONB, nullable=False)
+    warnings_json = Column(JSONB, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)

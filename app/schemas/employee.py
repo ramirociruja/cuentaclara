@@ -24,3 +24,23 @@ class EmployeeOut(EmployeeBase):
 
     class Config:
         orm_mode = True
+
+class EmployeeCreateIn(BaseModel):
+    name: str
+    email: EmailStr
+    role: str  # "admin" | "collector" | etc
+    phone: str | None = None
+    company_id: int
+    password: str
+
+
+class EmployeeUpdateIn(BaseModel):
+    name: str | None = None
+    email: EmailStr | None = None
+    role: str | None = None
+    phone: str | None = None
+    company_id: int | None = None
+
+
+class EmployeePasswordResetIn(BaseModel):
+    new_password: str

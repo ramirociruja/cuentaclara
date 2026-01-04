@@ -19,7 +19,7 @@ export default function LoginPage() {
     try {
       // TU backend usa email + password (NO username)
       const resp = await api.post("/login", {
-        email: email,
+        username: email,
         password: password,
       });
 
@@ -31,7 +31,7 @@ export default function LoginPage() {
 
       localStorage.setItem("token", token);
 
-      navigate("/companies");
+      navigate("/dashboard");
     } catch (err: any) {
       console.error(err);
       setError("Error al iniciar sesión. Verificá tus datos.");
