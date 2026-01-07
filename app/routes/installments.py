@@ -192,6 +192,128 @@ def pay_installment(
 
 
 
+@router.get("/collectable-per-loan")
+def collectable_per_loan(
+    q: Optional[str] = Query(None),
+    collector_id: Optional[int] = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    tz: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    """
+    Devuelve 1 fila por PRÉSTAMO: la cuota más vieja (menor number) que aún tenga saldo.
+    - Incluye cobrador (Loan.employee), cliente y saldos para alimentar la grilla de carga masiva.
+    - NO depende de due_date (puede ser vencida, semana, futura); siempre es "primera sin pagar".
+    - Excluye préstamos cancelados/refinanciados usando loan_is_effective_clause.
+    """
+    zone = ZoneInfo(tz) if tz else AR_TZ
+
+    # Subquery: por loan, la menor cuota (number) con saldo pendiente
+    sub = (
+        db.query(
+            Installment.loan_id.label("loan_id"),
+            func.min(Installment.number).label("next_number"),
+        )
+        .filter(Installment.loan_id.isnot(None))
+        .filter((Installment.amount - func.coalesce(Installment.paid_amount, 0)) > float(EPS))
+        .group_by(Installment.loan_id)
+        .subquery()
+    )
+
+    base = (
+        db.query(
+            Loan.id.label("loan_id"),
+            Employee.id.label("collector_id"),
+            Employee.name.label("collector_name"),
+            Customer.id.label("customer_id"),
+            func.btrim(func.concat_ws(" ", Customer.first_name, Customer.last_name)).label("customer_name"),
+            Customer.phone.label("customer_phone"),
+            Installment.id.label("installment_id"),
+            Installment.number.label("installment_number"),
+            Installment.due_date.label("due_date"),
+            Installment.amount.label("installment_amount"),
+            func.coalesce(Installment.paid_amount, 0).label("installment_paid_amount"),
+            Loan.total_due.label("loan_balance"),
+        )
+        .join(sub, sub.c.loan_id == Loan.id)
+        .join(
+            Installment,
+            and_(
+                Installment.loan_id == Loan.id,
+                Installment.number == sub.c.next_number,
+            )
+        )
+        .join(Customer, Customer.id == Loan.customer_id)
+        .outerjoin(Employee, Employee.id == Loan.employee_id)
+        .filter(Loan.company_id == current.company_id)
+        .filter(loan_is_effective_clause(Installment, Loan))
+    )
+
+    if collector_id is not None:
+        base = base.filter(Loan.employee_id == collector_id)
+
+    if q:
+        like = f"%{q.strip()}%"
+        base = base.filter(
+            or_(
+                Customer.first_name.ilike(like),
+                Customer.last_name.ilike(like),
+                Customer.phone.ilike(like),
+            )
+        )
+
+    total = base.count()
+
+    rows = (
+        base.order_by(
+            Employee.name.asc().nulls_last(),
+            Customer.last_name.asc().nulls_last(),
+            Customer.first_name.asc().nulls_last(),
+            Loan.id.asc(),
+        )
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    def _due_local(due_dt):
+        if due_dt is None:
+            return None
+        if isinstance(due_dt, datetime):
+            return due_dt.astimezone(zone).date().isoformat()
+        if isinstance(due_dt, date):
+            return due_dt.isoformat()
+        return str(due_dt)
+
+    data = []
+    for r in rows:
+        installment_amount = Decimal(str(r.installment_amount or 0))
+        paid_amount = Decimal(str(r.installment_paid_amount or 0))
+        inst_balance = installment_amount - paid_amount
+
+        data.append(
+            {
+                "loan_id": int(r.loan_id),
+                "collector_id": int(r.collector_id) if r.collector_id is not None else None,
+                "collector_name": r.collector_name or "Sin asignar",
+                "customer_id": int(r.customer_id),
+                "customer_name": r.customer_name or "",
+                "customer_phone": r.customer_phone,
+                "installment_id": int(r.installment_id),
+                "installment_number": int(r.installment_number or 0),
+                "due_date": _due_local(r.due_date),
+                "installment_amount": float(installment_amount),
+                "installment_balance": float(inst_balance),
+                "loan_balance": float(r.loan_balance or 0),
+            }
+        )
+
+    return {"data": data, "total": int(total or 0)}
+
+
+
 # =========================
 #        LIST
 # =========================
