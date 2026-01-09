@@ -21,7 +21,7 @@ class _CreateLoanOrPurchaseScreenState
   static const Color primaryColor = Color(0xFF3366CC);
   static const Color secondaryColor = Color(0xFF00CC66);
   static const Color dangerColor = Color(0xFFFF4444);
-  static const Color disabledGrey = Color(0xFFBDBDBD); // P0#2
+  static const Color disabledGrey = Color(0xFFBDBDBD);
 
   // P0#2: forzamos siempre préstamo, toggle deshabilitado
   final bool isLoan = true;
@@ -32,24 +32,30 @@ class _CreateLoanOrPurchaseScreenState
     text: "Semanal",
   );
   final TextEditingController startDateController = TextEditingController(
-    text: DateFormat('yyyy-MM-dd').format(DateTime.now()),
+    text: DateFormat('dd/MM/yyyy').format(DateTime.now()),
   );
 
   // Nuevos campos
-  final _descCtrl = TextEditingController(); // descripción libre
-  int _selectedCollectionDay = DateTime.now().weekday; // 1..7 (L=1 .. D=7)
+  final _descCtrl = TextEditingController();
+  int _selectedCollectionDay = DateTime.now().weekday; // 1..7
+
+  // NUEVO: intervalo en días (reemplaza/convive con frequency)
+  // Si _installmentIntervalDays != null => usamos esta lógica (duración fija en días)
+  int? _installmentIntervalDays = 7; // default: semanal
+  bool _useCustomInterval = false;
+  final TextEditingController _customIntervalCtrl = TextEditingController();
 
   int? selectedClientId;
   double? previewAmount;
   DateTime? previewEndDate;
   List<Customer> customers = [];
 
-  // ---- NUEVO: manejo de cobradores ----
+  // ---- manejo de cobradores ----
   List<Map<String, dynamic>> _collectors = [];
   int? _selectedCollectorId;
   bool _isAdmin = false;
   bool _loadingCollectors = false;
-  // -------------------------------------
+  // -----------------------------
 
   final currencyFormatter = NumberFormat.currency(
     locale: 'es_AR',
@@ -61,8 +67,9 @@ class _CreateLoanOrPurchaseScreenState
   void initState() {
     super.initState();
     _loadCustomers();
-    _loadCollectors(); // 👈 para dropdown de cobrador (si es admin)
-    _updatePreview(); // P0#3: para que muestre preview inicial coherente
+    _loadCollectors();
+    _syncIntervalUIFromFrequency(); // mantiene coherencia inicial
+    _updatePreview();
   }
 
   @override
@@ -72,6 +79,7 @@ class _CreateLoanOrPurchaseScreenState
     frequencyController.dispose();
     startDateController.dispose();
     _descCtrl.dispose();
+    _customIntervalCtrl.dispose();
     super.dispose();
   }
 
@@ -89,10 +97,9 @@ class _CreateLoanOrPurchaseScreenState
     }
   }
 
-  // ======= P0#3: helpers para calcular fecha final desde la FECHA DE INICIO =======
   DateTime? _parseStartDateText() {
     try {
-      return DateFormat('yyyy-MM-dd').parse(startDateController.text);
+      return DateFormat('dd/MM/yyyy').parse(startDateController.text);
     } catch (_) {
       return null;
     }
@@ -101,7 +108,7 @@ class _CreateLoanOrPurchaseScreenState
   DateTime _addMonthsSafe(DateTime d, int months) {
     final y = d.year + ((d.month - 1 + months) ~/ 12);
     final m = ((d.month - 1 + months) % 12) + 1;
-    final lastDay = DateTime(y, m + 1, 0).day; // último día del mes destino
+    final lastDay = DateTime(y, m + 1, 0).day;
     final day = d.day.clamp(1, lastDay);
     return DateTime(
       y,
@@ -118,24 +125,29 @@ class _CreateLoanOrPurchaseScreenState
   DateTime computeEndDate({
     required DateTime start,
     required int installments,
-    required String frequencyLabel, // "Semanal" | "Mensual"
+    required String frequencyLabel, // Semanal|Mensual (fallback)
+    required int? intervalDays, // si viene, manda
   }) {
     if (installments <= 0) return start;
+
+    // 1) Si el usuario eligió intervalo en días, es la fuente de verdad
+    if (intervalDays != null && intervalDays >= 1) {
+      return start.add(Duration(days: installments * intervalDays));
+    }
+
+    // 2) Fallback histórico
     if (frequencyLabel == "Semanal") {
-      // última cuota: n semanas después del inicio
       return start.add(Duration(days: installments * 7));
     } else {
-      // mensual de calendario real (no 30 fijo)
       return _addMonthsSafe(start, installments);
     }
   }
-  // ==============================================================================
 
   void _updatePreview() {
     final amount = parseCurrency(amountController.text);
     final installments = int.tryParse(installmentsController.text);
     final start = _parseStartDateText();
-    final freqLabel = frequencyController.text; // "Semanal" | "Mensual"
+    final freqLabel = frequencyController.text;
 
     if (amount != null &&
         installments != null &&
@@ -145,6 +157,7 @@ class _CreateLoanOrPurchaseScreenState
         start: start,
         installments: installments,
         frequencyLabel: freqLabel,
+        intervalDays: _installmentIntervalDays,
       );
       setState(() {
         previewAmount = amount;
@@ -158,13 +171,29 @@ class _CreateLoanOrPurchaseScreenState
     }
   }
 
+  // Mantener frecuencia + interval coherentes al inicio
+  void _syncIntervalUIFromFrequency() {
+    final f = frequencyController.text;
+    // defaults: si el usuario usa la frecuencia vieja
+    if (f == "Semanal") {
+      _installmentIntervalDays = 7;
+      _useCustomInterval = false;
+      _customIntervalCtrl.text = "";
+    } else if (f == "Mensual") {
+      // Si querés mensual calendario real, podés poner intervalDays=null.
+      // Pero como vos pedís "cantidad de días", dejo 30 como preset (mensual fijo).
+      _installmentIntervalDays = 30;
+      _useCustomInterval = false;
+      _customIntervalCtrl.text = "";
+    }
+  }
+
   // ==========================
   //  Carga de datos remotos
   // ==========================
 
   Future<void> _loadCustomers() async {
     try {
-      // NOTA: todavía usa "por empleado"; ya lo cambiaremos cuando unifiquemos clientes por empresa
       final customerList = await ApiService.fetchCompanyCustomers();
       if (!mounted) return;
       setState(() => customers = customerList);
@@ -179,14 +208,10 @@ class _CreateLoanOrPurchaseScreenState
         _loadingCollectors = true;
       });
 
-      // 1) id del empleado logueado
       final empId = await ApiService.getEmployeeId();
-
-      // 2) empleados de la empresa (GET /employees/)
       final rawList = await ApiService.fetchEmployeesInCompany();
       if (!mounted) return;
 
-      // Normalizar campos: id, name, role
       final normalized =
           rawList
               .whereType<Map<String, dynamic>>()
@@ -214,12 +239,10 @@ class _CreateLoanOrPurchaseScreenState
         isAdmin = myRole.toLowerCase() == 'admin';
       }
 
-      // Para el dropdown nos interesan cobradores (y opcionalmente admin)
       final collectors =
           normalized.where((e) {
             final r = (e['role'] ?? '') as String;
             final rl = r.toLowerCase();
-            // Dejamos que el admin también se pueda elegir a sí mismo
             return rl == 'collector' || rl == 'admin';
           }).toList();
 
@@ -227,7 +250,6 @@ class _CreateLoanOrPurchaseScreenState
         _isAdmin = isAdmin;
         _collectors = collectors;
         if (isAdmin && empId != null) {
-          // Por defecto: el admin mismo como cobrador
           _selectedCollectorId = empId;
         } else {
           _selectedCollectorId = null;
@@ -249,6 +271,21 @@ class _CreateLoanOrPurchaseScreenState
   //   Crear préstamo
   // ==========================
 
+  int? _getIntervalDaysValidated() {
+    // Preset elegido
+    if (!_useCustomInterval) {
+      return _installmentIntervalDays;
+    }
+
+    // Custom
+    final raw = _customIntervalCtrl.text.trim();
+    if (raw.isEmpty) return null;
+    final v = int.tryParse(raw);
+    if (v == null) return null;
+    if (v < 1 || v > 3650) return null;
+    return v;
+  }
+
   Future<void> _createLoan() async {
     try {
       if (selectedClientId == null) {
@@ -256,7 +293,6 @@ class _CreateLoanOrPurchaseScreenState
         return;
       }
 
-      // Si es admin, debe elegir un cobrador
       if (_isAdmin && _selectedCollectorId == null) {
         _showErrorSnackbar('Por favor, selecciona un cobrador');
         return;
@@ -285,9 +321,16 @@ class _CreateLoanOrPurchaseScreenState
         return;
       }
 
+      final intervalDays = _getIntervalDaysValidated();
+      if (intervalDays == null) {
+        _showErrorSnackbar('Ingresá el intervalo en días (1 a 3650)');
+        return;
+      }
+
       final installmentAmount = amount / installments;
 
-      // P0#2: siempre creamos PRÉSTAMO (no venta)
+      // Si el usuario usa intervalDays, no enviamos frequency.
+      // Esto te permite convivir con datos viejos y migrar de a poco.
       final loan = Loan(
         id: 0,
         customerId: selectedClientId!,
@@ -295,18 +338,18 @@ class _CreateLoanOrPurchaseScreenState
         totalDue: amount,
         installmentsCount: installments,
         installmentAmount: installmentAmount,
-        frequency: frequencyController.text == "Semanal" ? "weekly" : "monthly",
-        startDate: DateFormat('yyyy-MM-dd').format(start), // usa fecha elegida
+        frequency: null, // 👈 dejamos de depender de weekly/monthly
+        startDate: DateFormat('yyyy-MM-dd').format(start),
         status: 'active',
-        companyId: await ApiService.getCompanyId() ?? 0,
+        companyId:
+            await ApiService.getCompanyId(), // ahora nullable en tu Loan.dart
 
-        // nuevos campos
         description:
             _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
         collectionDay: _selectedCollectionDay,
 
-        // 👇 NUEVO: sólo el admin envía employeeId; para collectors queda null
         employeeId: _isAdmin ? _selectedCollectorId : null,
+        installmentIntervalDays: intervalDays,
       );
 
       final loanResponse = await ApiService.createLoan(loan);
@@ -325,7 +368,7 @@ class _CreateLoanOrPurchaseScreenState
           ),
         );
       }
-    } catch (e) {
+    } catch (_) {
       _showErrorSnackbar('Error al crear préstamo');
     }
   }
@@ -381,9 +424,9 @@ class _CreateLoanOrPurchaseScreenState
 
     if (picked != null) {
       setState(() {
-        startDateController.text = DateFormat('yyyy-MM-dd').format(picked);
+        startDateController.text = DateFormat('dd/MM/yyyy').format(picked);
       });
-      _updatePreview(); // P0#3: recalcular usando la nueva fecha de inicio
+      _updatePreview();
     }
   }
 
@@ -441,12 +484,8 @@ class _CreateLoanOrPurchaseScreenState
     );
   }
 
-  // 👇 NUEVO: dropdown de cobrador (sólo visible para admin)
   Widget _buildCollectorDropdown() {
-    if (!_isAdmin) {
-      // Los cobradores NO ven este control
-      return const SizedBox.shrink();
-    }
+    if (!_isAdmin) return const SizedBox.shrink();
 
     if (_loadingCollectors) {
       return const Center(
@@ -507,7 +546,7 @@ class _CreateLoanOrPurchaseScreenState
       inputFormatters: [
         FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
       ],
-      onChanged: (_) => _updatePreview(), // P0#3: recalcular en vivo
+      onChanged: (_) => _updatePreview(),
     );
   }
 
@@ -523,25 +562,7 @@ class _CreateLoanOrPurchaseScreenState
     );
   }
 
-  Widget _buildFrequencyDropdown() {
-    return DropdownButtonFormField<String>(
-      value: frequencyController.text,
-      decoration: InputDecoration(
-        labelText: 'Frecuencia',
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-      items: const [
-        DropdownMenuItem(value: "Semanal", child: Text("Semanal")),
-        DropdownMenuItem(value: "Mensual", child: Text("Mensual")),
-      ],
-      onChanged: (value) {
-        setState(() {
-          frequencyController.text = value!;
-        });
-        _updatePreview(); // P0#3
-      },
-    );
-  }
+  // Mantengo el dropdown por compatibilidad visual, pero el valor final se gobierna por intervalDays
 
   Widget _buildDatePicker() {
     return TextFormField(
@@ -572,11 +593,10 @@ class _CreateLoanOrPurchaseScreenState
   }
 
   Widget _buildCollectionDaySelector() {
-    // Orden ISO: L=1, M=2, M=3, J=4, V=5, S=6, D=7
     const days = [
       {'label': 'L', 'value': 1},
       {'label': 'M', 'value': 2},
-      {'label': 'M', 'value': 3}, // miércoles (pediste "M")
+      {'label': 'M', 'value': 3}, // miércoles
       {'label': 'J', 'value': 4},
       {'label': 'V', 'value': 5},
       {'label': 'S', 'value': 6},
@@ -628,10 +648,117 @@ class _CreateLoanOrPurchaseScreenState
     );
   }
 
+  // ✅ NUEVO: selector de intervalo en días (presets + personalizado)
+  Widget _buildInstallmentIntervalSelector() {
+    final presets = <int>[7, 15, 30, 45, 60];
+
+    Widget _chip(
+      String label, {
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      return ChoiceChip(
+        label: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        selectedColor: primaryColor,
+        backgroundColor: Colors.grey.shade200,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Intervalo entre cuotas',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ...presets.map((d) {
+              final selected =
+                  !_useCustomInterval && _installmentIntervalDays == d;
+              final label =
+                  d == 7
+                      ? '7 (Semanal)'
+                      : d == 15
+                      ? '15 (Quincenal)'
+                      : d == 30
+                      ? '30 (Mensual)'
+                      : '$d';
+              return _chip(
+                label,
+                selected: selected,
+                onTap: () {
+                  setState(() {
+                    _useCustomInterval = false;
+                    _installmentIntervalDays = d;
+                    _customIntervalCtrl.text = "";
+                  });
+                  _updatePreview();
+                },
+              );
+            }),
+            _chip(
+              'Personalizado',
+              selected: _useCustomInterval,
+              onTap: () {
+                setState(() {
+                  _useCustomInterval = true;
+                  // no forzamos intervalDays acá, se toma del input
+                });
+                _updatePreview();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_useCustomInterval)
+          TextFormField(
+            controller: _customIntervalCtrl,
+            decoration: InputDecoration(
+              labelText: 'Días (1 a 3650)',
+              hintText: 'Ej: 10, 21, 28...',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            keyboardType: TextInputType.number,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(4),
+            ],
+            onChanged: (_) {
+              // reflejarlo también en _installmentIntervalDays para preview
+              final v = int.tryParse(_customIntervalCtrl.text.trim());
+              setState(() {
+                _installmentIntervalDays = v;
+              });
+              _updatePreview();
+            },
+          ),
+      ],
+    );
+  }
+
   Widget _buildPreviewSection() {
     if (previewAmount == null || previewEndDate == null) {
       return const SizedBox();
     }
+
+    final installments = int.tryParse(installmentsController.text) ?? 0;
+    if (installments <= 0) return const SizedBox();
 
     return Card(
       elevation: 2,
@@ -654,14 +781,17 @@ class _CreateLoanOrPurchaseScreenState
             const SizedBox(height: 8),
             _buildPreviewRow(
               'Monto por cuota:',
-              formatCurrency(
-                previewAmount! / int.parse(installmentsController.text),
-              ),
+              formatCurrency(previewAmount! / installments),
             ),
             _buildPreviewRow(
               'Fecha de pago final:',
               DateFormat('dd/MM/yyyy').format(previewEndDate!),
             ),
+            if (_installmentIntervalDays != null)
+              _buildPreviewRow(
+                'Intervalo:',
+                '${_installmentIntervalDays!} días',
+              ),
           ],
         ),
       ),
@@ -690,7 +820,7 @@ class _CreateLoanOrPurchaseScreenState
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       child: const Text(
-        'Crear Préstamo', // P0#2: texto fijo
+        'Crear Préstamo',
         style: TextStyle(
           fontSize: 16,
           color: Colors.white,
@@ -707,7 +837,7 @@ class _CreateLoanOrPurchaseScreenState
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Crear Nuevo Préstamo', // P0#2: título fijo
+          'Crear Nuevo Préstamo',
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
         backgroundColor: primaryColor,
@@ -723,7 +853,6 @@ class _CreateLoanOrPurchaseScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // ================= P0#2: Toggle “gris” y bloqueado =================
                   Card(
                     elevation: 2,
                     shape: RoundedRectangleBorder(
@@ -754,15 +883,13 @@ class _CreateLoanOrPurchaseScreenState
                       ),
                       trailing: Switch(
                         value: true,
-                        onChanged: null, // deshabilitado
+                        onChanged: null,
                         activeColor: primaryColor,
                         inactiveThumbColor: disabledGrey,
                         inactiveTrackColor: disabledGrey.withValues(alpha: 0.3),
                       ),
                     ),
                   ),
-
-                  // ==================================================================
                   const SizedBox(height: 16),
                   Card(
                     elevation: 2,
@@ -779,7 +906,7 @@ class _CreateLoanOrPurchaseScreenState
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            'Datos del Préstamo', // P0#2 fijo
+                            'Datos del Préstamo',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.grey[600],
@@ -788,18 +915,25 @@ class _CreateLoanOrPurchaseScreenState
                           const SizedBox(height: 16),
                           _buildCustomerDropdown(),
                           const SizedBox(height: 16),
-                          _buildCollectorDropdown(), // 👈 NUEVO
+
+                          _buildCollectorDropdown(),
                           if (_isAdmin) const SizedBox(height: 16),
+
                           _buildAmountInput(),
                           const SizedBox(height: 16),
+
                           _buildInstallmentsInput(),
                           const SizedBox(height: 16),
-                          _buildFrequencyDropdown(),
+
+                          _buildInstallmentIntervalSelector(),
                           const SizedBox(height: 16),
-                          _buildDatePicker(),
-                          const SizedBox(height: 16),
+
                           _buildCollectionDaySelector(),
                           const SizedBox(height: 16),
+
+                          _buildDatePicker(),
+                          const SizedBox(height: 16),
+
                           _buildDescriptionInput(),
                         ],
                       ),

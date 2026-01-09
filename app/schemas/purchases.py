@@ -1,36 +1,47 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Literal
 
 from app.schemas.installments import InstallmentOut
+
 
 class PurchaseBase(BaseModel):
     customer_id: int
     product_name: str
     amount: float
-    total_due: float
-    installments: int
-    installment_amount: float
-    frequency: str  # "weekly" or "monthly"
-    status: Optional[str] = "active"
-    company_id: int  # Añadimos `company_id`
+
+    # Cantidad de cuotas
+    installments_count: int = Field(..., ge=1, le=10000)
+
+    # Monto por cuota (si no se envía, el BE puede calcularlo)
+    installment_amount: Optional[float] = None
+
+    # Intervalo en días entre cuotas (requerido para creación)
+    installment_interval_days: Optional[int] = Field(None, ge=1, le=3650)
+
+    # Fecha de inicio (opcional, si no viene el BE usa "ahora local")
+    start_date: Optional[datetime] = None
+
+    # Estado (idealmente canónico EN como en loans)
+    status: Optional[str] = None
+
+    # Se setea desde el token en el BE
+    company_id: Optional[int] = None
+
 
 class PurchaseCreate(PurchaseBase):
-    pass
+    # En CREATE lo exigimos
+    installment_interval_days: int = Field(..., ge=1, le=3650)
 
-class PurchaseOut(BaseModel):
+
+class PurchaseOut(PurchaseBase):
     id: int
-    customer_id: int
-    product_name: str
-    amount: float
     total_due: float
-    installments: int
-    installment_amount: float
-    frequency: str
+
+    # En responses, start_date ya viene siempre
     start_date: datetime
-    status: str
-    company_id: int
-    installments_list: list[InstallmentOut]
+
+    installments_list: List[InstallmentOut] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # pydantic v2 (equiv. a orm_mode=True)

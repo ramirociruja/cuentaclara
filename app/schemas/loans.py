@@ -8,10 +8,10 @@ class LoansBase(BaseModel):
     amount: float
     installments_count: int
     installment_amount: Optional[float] = None
-    frequency: str                      # "weekly" | "monthly" (como ya usás)
+    installment_interval_days: Optional[int] = Field(None, ge=1, le=3650)
     start_date: Optional[datetime] = None
     status: Optional[str] = None
-    company_id: int
+    company_id: Optional[int] = None
     employee_id: Optional[int] = None
 
     # NUEVOS
@@ -22,13 +22,12 @@ class LoansBase(BaseModel):
     )
 
 class LoansCreate(LoansBase):
-    pass
+    installment_interval_days: int = Field(..., ge=1, le=3650)
 
 class LoansUpdate(BaseModel):
     amount: Optional[float] = None
     installments_count: Optional[int] = None
     installment_amount: Optional[float] = None
-    frequency: Optional[str] = None
     start_date: Optional[datetime] = None
     status: Optional[str] = None
     company_id: Optional[int] = None
@@ -41,7 +40,6 @@ class LoansOut(LoansBase):
     id: int
     total_due: float
     installments: List[InstallmentOut] = []
-    company_id: Optional[int] = None
     employee_name: Optional[str] = None
 
     class Config:

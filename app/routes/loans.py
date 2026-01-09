@@ -22,7 +22,6 @@ from pydantic import BaseModel
 from app.constants import InstallmentStatus, LoanStatus
 from app.utils.normalize import norm_loan_status
 from app.utils.time_windows import parse_iso_aware_utc, local_dates_to_utc_window, AR_TZ
-from zoneinfo import ZoneInfo
 
 
 router = APIRouter(
@@ -428,13 +427,15 @@ def create_loan(
     db.refresh(new_loan)
 
     # === 4) Crear cuotas en base a start_local ===
+    interval_days = loan.installment_interval_days
+    if interval_days is None or interval_days < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="installment_interval_days es requerido y debe ser >= 1.",
+        )
+    
     for i in range(loan.installments_count):
-        if loan.frequency == "weekly":
-            # sumamos semanas desde la FECHA LOCAL de inicio
-            due_local = start_local + timedelta(weeks=i + 1)
-        else:
-            # mensual simple (4 semanas aprox)
-            due_local = start_local + timedelta(weeks=(i + 1) * 4)
+        due_local = start_local + timedelta(days=interval_days * (i + 1))
 
         # due_date = medianoche LOCAL → UTC
         local_midnight = due_local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -520,7 +521,7 @@ def get_loans_by_customer(
             total_due=loan.total_due,
             installments_count=loan.installments_count,
             installment_amount=getattr(loan, "installment_amount", None),
-            frequency=loan.frequency,
+            installment_interval_days=getattr(loan, "installment_interval_days", None),
             start_date=loan.start_date,
             status=loan.status,
             company_id=getattr(loan, "company_id", None),
@@ -603,7 +604,7 @@ def get_loans_by_employee(
             total_due=loan.total_due,
             installments_count=loan.installments_count,
             installment_amount=getattr(loan, "installment_amount", None),
-            frequency=loan.frequency,
+            installment_interval_days=getattr(loan, "installment_interval_days", None),
             start_date=loan.start_date,
             status=loan.status,
             company_id=getattr(loan, "company_id", None),

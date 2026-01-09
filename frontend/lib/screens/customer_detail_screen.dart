@@ -378,29 +378,9 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     );
   }
 
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            value,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildLoanCard(Loan loan) {
     // Normalizar estado de PRÉSTAMO con helper correcto
     final displayStatus = normalizeLoanStatus(loan.status);
-    // Color por helper de préstamos
     Color chipColor = loanStatusColor(displayStatus);
 
     // Mantener tus overrides de matiz (opcional)
@@ -409,8 +389,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     if (statusLower.contains('cancel')) chipColor = dangerColor; // rojo
 
     // Progreso seguro
-    final total = (loan.amount);
-    final due = (loan.totalDue);
+    final total = loan.amount;
+    final due = loan.totalDue;
     double progress = 0;
     if (total > 0) {
       progress = ((total - due) / total).clamp(0.0, 1.0);
@@ -421,10 +401,48 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     final v = loan.startDate;
     if (v is DateTime) {
       startDt = v as DateTime?;
-    } else // Try to parse any non-null value by converting to string (covers String or numeric timestamps)
+    } else {
       startDt = DateTime.tryParse(v.toString());
+    }
 
     final isPaid = displayStatus.toLowerCase() == 'pagado';
+    final intervalDays = loan.installmentIntervalDays;
+
+    // Helpers de “badges” (cobrador / intervalo)
+    Widget badge({
+      required IconData icon,
+      required String text,
+      required Color color,
+    }) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              _fixEncoding(text),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final hasEmployee =
+        loan.employeeName != null && loan.employeeName!.trim().isNotEmpty;
+
+    final hasInterval = intervalDays != null && intervalDays > 0;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -450,6 +468,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Header: ID + Estado
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -470,20 +489,92 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              if (loan.employeeName != null &&
-                  loan.employeeName!.trim().isNotEmpty)
-                _buildDetailRow('Cobrador:', loan.employeeName!),
-              _buildDetailRow('Monto:', currencyFormatter.format(loan.amount)),
-              _buildDetailRow(
-                'Saldo:',
+
+              // Badges secundarios: Cobrador + Intervalo
+              if (hasEmployee || hasInterval) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (hasEmployee)
+                      badge(
+                        icon: Icons.person,
+                        text: loan.employeeName!,
+                        color: primaryColor,
+                      ),
+                    if (hasInterval)
+                      badge(
+                        icon: Icons.calendar_month,
+                        text:
+                            'Cada $intervalDays día${intervalDays == 1 ? '' : 's'}',
+                        color: Colors.grey.shade700,
+                      ),
+                  ],
+                ),
+              ],
+
+              const SizedBox(height: 12),
+
+              // Económico con jerarquía: Saldo grande + monto secundario
+              Text(
+                'Saldo',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
                 currencyFormatter.format(loan.totalDue),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: isPaid ? secondaryColor : Colors.black87,
+                ),
               ),
-              _buildDetailRow(
-                'Fecha:',
-                startDt != null ? dateFormat.format(startDt) : '-',
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    'Monto total: ',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                  Text(
+                    currencyFormatter.format(loan.amount),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 10),
+
+              const SizedBox(height: 8),
+
+              // Fecha (operativo)
+              Row(
+                children: [
+                  Icon(Icons.event, size: 16, color: Colors.grey.shade600),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Inicio: ',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                  Text(
+                    startDt != null ? dateFormat.format(startDt) : '-',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              // Progreso / Pagado
               if (!isPaid) ...[
                 LinearProgressIndicator(
                   value: progress,

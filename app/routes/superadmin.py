@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from dateutil.relativedelta import relativedelta
+from dateutil.relativedelta import relativedelta  # (queda importado por si lo usás en otra parte)
 from app.database.db import get_db
 from app.models.models import (
     Company,
@@ -546,6 +546,13 @@ def superadmin_commit_onboarding_import(
             employee_id = _get_employee_id_by_email(l.get("employee_email")) or default_owner.id
             start_dt = _parse_iso_dt(l.get("start_date")) or now
 
+            interval_days = int(l.get("installment_interval_days") or 0)
+            if interval_days < 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Loans: installment_interval_days inválido en loan_ref={lref} (>=1 requerido)",
+                )
+
             loan = Loan(
                 company_id=company_id,
                 customer_id=customer_id,
@@ -554,7 +561,11 @@ def superadmin_commit_onboarding_import(
                 total_due=float(l.get("total_due") or 0),
                 installments_count=int(l.get("installments_count") or 0),
                 installment_amount=float(l.get("installment_amount") or 0),
-                frequency=(l.get("frequency") or "weekly"),
+
+                # ✅ frequency deprecado; lo guardamos null y usamos interval_days
+                frequency=None,
+                installment_interval_days=interval_days,
+
                 start_date=start_dt,
                 status=(l.get("status") or LoanStatus.ACTIVE.value),
                 description=l.get("description"),
@@ -565,22 +576,22 @@ def superadmin_commit_onboarding_import(
             loan_ref_to_id[lref] = loan.id
             counts.loans_created += 1
 
-            # Generación de cuotas:
-            # - weekly: +1 semana por cuota
-            # - monthly: +1 mes por cuota (cuota 1 vence 1 mes después de start_date)
-            base_local = start_dt.astimezone(AR_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+            # ✅ Generación de cuotas (MISMA lógica que create_loan actual):
+            # - start_dt está en UTC (tz-aware)
+            # - trabajamos en local AR_TZ
+            # - due_date = medianoche local convertida a UTC
+            start_local = start_dt.astimezone(AR_TZ)
+
+            today_local = datetime.now(AR_TZ).date()
 
             n = loan.installments_count
             for i in range(n):
-                if loan.frequency == "weekly":
-                    due_local = base_local + timedelta(weeks=i + 1)
-                else:
-                    due_local = base_local + relativedelta(months=i + 1)
+                due_local = start_local + timedelta(days=interval_days * (i + 1))
 
-                due_utc = due_local.astimezone(timezone.utc)
+                local_midnight = due_local.replace(hour=0, minute=0, second=0, microsecond=0)
+                due_utc = local_midnight.astimezone(timezone.utc)
 
-                today_local = datetime.now(AR_TZ).date()
-                is_overdue = (due_local.date() < today_local)
+                is_overdue = (local_midnight.date() < today_local)
 
                 inst = Installment(
                     loan_id=loan.id,
@@ -685,47 +696,46 @@ def superadmin_commit_onboarding_import(
                         f"Corregí el Excel y reintentá."
                     ),
                 )
+
         # =========================
-            # 6) Recalcular saldo de cada loan (total_due) según cuotas
-            # =========================
-            EPS = 0.000001
+        # 6) Recalcular saldo de cada loan (total_due) según cuotas
+        # =========================
+        EPS = 0.000001
 
-            for lref, loan_id in loan_ref_to_id.items():
-                loan_obj = db.get(Loan, loan_id)
-                if not loan_obj:
-                    continue
+        for lref, loan_id in loan_ref_to_id.items():
+            loan_obj = db.get(Loan, loan_id)
+            if not loan_obj:
+                continue
 
-                insts = loan_id_to_installments.get(loan_id, [])
-                # Si por alguna razón no está en el dict, lo recalculamos desde DB
-                if not insts:
-                    insts = (
-                        db.query(Installment)
-                        .filter(Installment.loan_id == loan_id)
-                        .order_by(Installment.number.asc())
-                        .all()
-                    )
+            insts = loan_id_to_installments.get(loan_id, [])
+            # Si por alguna razón no está en el dict, lo recalculamos desde DB
+            if not insts:
+                insts = (
+                    db.query(Installment)
+                    .filter(Installment.loan_id == loan_id)
+                    .order_by(Installment.number.asc())
+                    .all()
+                )
 
-                remaining = 0.0
-                for inst in insts:
-                    amt = float(inst.amount or 0.0)
-                    paid = float(inst.paid_amount or 0.0)
-                    remaining += max(0.0, amt - paid)
+            remaining_due = 0.0
+            for inst in insts:
+                amt = float(inst.amount or 0.0)
+                paid = float(inst.paid_amount or 0.0)
+                remaining_due += max(0.0, amt - paid)
 
-                # Normalizar flotantes
-                if remaining < EPS:
-                    remaining = 0.0
+            if remaining_due < EPS:
+                remaining_due = 0.0
 
-                loan_obj.total_due = remaining
+            loan_obj.total_due = remaining_due
 
-                # Opcional: estado del préstamo según saldo
-                if remaining == 0.0:
-                    loan_obj.status = LoanStatus.PAID.value
-                else:
-                    # Si querés mantener status del Excel, no lo forces.
-                    # Si preferís normalizar:
-                    if (loan_obj.status or "") == LoanStatus.PAID.value:
-                        loan_obj.status = LoanStatus.ACTIVE.value
-                        
+            # Status según saldo (misma convención que venís usando)
+            if remaining_due == 0.0:
+                loan_obj.status = LoanStatus.PAID.value
+            else:
+                # Si el excel puso "paid" pero queda saldo, lo corregimos
+                if (loan_obj.status or "") == LoanStatus.PAID.value:
+                    loan_obj.status = LoanStatus.ACTIVE.value
+
         session.status = "committed"
 
         db.commit()

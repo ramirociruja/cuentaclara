@@ -23,6 +23,13 @@ class SessionExpiredException implements Exception {
   String toString() => message;
 }
 
+class LicenseExpiredException implements Exception {
+  final String message;
+  LicenseExpiredException([this.message = 'Licencia vencida']);
+  @override
+  String toString() => message;
+}
+
 class PayInstallmentResult {
   final Installment installment;
   final int? paymentId;
@@ -34,6 +41,7 @@ class AuthEvents {
   static const loggedIn = 'loggedIn';
   static const sessionExpired = 'sessionExpired';
   static const loggedOut = 'loggedOut';
+  static const licenseExpired = 'licenseExpired';
 }
 
 class ApiService {
@@ -393,14 +401,44 @@ class ApiService {
     }
   }
 
+  static bool _isLicenseExpiredResponse(http.Response resp) {
+    if (resp.statusCode != 403) return false;
+
+    try {
+      final data = _json(resp);
+      if (data is! Map<String, dynamic>) return false;
+
+      final detail = data['detail'];
+      if (detail is! Map) return false;
+
+      final code = detail['code']?.toString();
+      final status = detail['status']?.toString();
+
+      return code == 'SERVICE_SUSPENDED' && status == 'expired';
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ---------- GET ----------
   static Future<http.Response> _get(Uri url) async {
     var resp = await http.get(url, headers: await _headers());
-    if (resp.statusCode != 401) return resp;
 
+    if (_isLicenseExpiredResponse(resp)) {
+      _authEvents.add(AuthEvents.licenseExpired);
+      throw LicenseExpiredException();
+    }
+
+    if (resp.statusCode != 401) return resp;
     // intenta una sola vez renovar token
     if (await _tryRefresh()) {
-      return await http.get(url, headers: await _headers());
+      resp = await http.get(url, headers: await _headers());
+
+      if (_isLicenseExpiredResponse(resp)) {
+        _authEvents.add(AuthEvents.licenseExpired);
+        throw LicenseExpiredException();
+      }
+      return resp;
     }
 
     throw SessionExpiredException();
@@ -418,12 +456,24 @@ class ApiService {
       body: body,
     );
 
+    if (withAuth && _isLicenseExpiredResponse(resp)) {
+      _authEvents.add(AuthEvents.licenseExpired);
+      throw LicenseExpiredException();
+    }
+
     // si no es auth o no hay 401 → devolvemos respuesta normal
     if (!withAuth || resp.statusCode != 401) return resp;
 
     // intenta renovar tokens
     if (await _tryRefresh()) {
-      return await http.post(url, headers: await _headers(), body: body);
+      resp = await http.post(url, headers: await _headers(), body: body);
+
+      if (_isLicenseExpiredResponse(resp)) {
+        _authEvents.add(AuthEvents.licenseExpired);
+        throw LicenseExpiredException();
+      }
+
+      return resp;
     }
 
     throw SessionExpiredException();
@@ -432,11 +482,22 @@ class ApiService {
   // ---------- PUT ----------
   static Future<http.Response> _put(Uri url, {Object? body}) async {
     var resp = await http.put(url, headers: await _headers(), body: body);
+
+    if (_isLicenseExpiredResponse(resp)) {
+      _authEvents.add(AuthEvents.licenseExpired);
+      throw LicenseExpiredException();
+    }
+
     if (resp.statusCode != 401) return resp;
 
     // reintenta solo una vez si se logró refrescar correctamente
     if (await _tryRefresh()) {
-      return await http.put(url, headers: await _headers(), body: body);
+      resp = await http.put(url, headers: await _headers(), body: body);
+      if (_isLicenseExpiredResponse(resp)) {
+        _authEvents.add(AuthEvents.licenseExpired);
+        throw LicenseExpiredException();
+      }
+      return resp;
     }
 
     throw SessionExpiredException();

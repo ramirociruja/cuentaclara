@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:frontend/screens/login_screen.dart';
 import 'package:frontend/screens/home_screen.dart';
 import 'package:frontend/screens/more_screen.dart';
 import 'package:frontend/screens/profile_screen.dart';
 import 'package:frontend/screens/activity_screen.dart';
+import 'package:frontend/screens/license_expired_screen.dart';
 import 'package:frontend/services/api_service.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
@@ -56,20 +58,37 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
     _authSub = ApiService.authEvents.listen((evt) async {
       if (!mounted) return;
 
-      // Sesión expirada o logout manual
-      if (evt == AuthEvents.sessionExpired || evt == AuthEvents.loggedOut) {
+      // Licencia vencida
+      if (evt == AuthEvents.licenseExpired) {
         if (_handlingRedirect) return;
         _handlingRedirect = true;
 
-        final messenger = appNavigatorKey.currentContext != null
-            ? ScaffoldMessenger.of(appNavigatorKey.currentContext!)
-            : null;
-
-        messenger?.showSnackBar(
-          const SnackBar(
-            content: Text('Sesión expirada. Iniciá sesión nuevamente.'),
-          ),
+        await appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
+          '/license-expired',
+          (r) => false,
         );
+
+        await Future<void>.delayed(Duration.zero);
+        _handlingRedirect = false;
+        return;
+      }
+
+      // Sesión expirada o logout manual
+      // Sesión expirada o logout manual (debe ganar siempre)
+      if (evt == AuthEvents.sessionExpired || evt == AuthEvents.loggedOut) {
+        // Importante: no bloquear este redirect
+        _handlingRedirect = true;
+
+        // Solo mostrar snackbar si fue expiración de sesión, no logout manual
+        if (evt == AuthEvents.sessionExpired) {
+          final ctx = appNavigatorKey.currentContext;
+          final messenger = ctx != null ? ScaffoldMessenger.of(ctx) : null;
+          messenger?.showSnackBar(
+            const SnackBar(
+              content: Text('Sesión expirada. Iniciá sesión nuevamente.'),
+            ),
+          );
+        }
 
         // Limpia el backstack y lleva a Login
         await appNavigatorKey.currentState?.pushNamedAndRemoveUntil(
@@ -79,6 +98,7 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
 
         await Future<void>.delayed(Duration.zero);
         _handlingRedirect = false;
+        return;
       }
 
       // Login exitoso
@@ -106,12 +126,17 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      locale: const Locale('es', 'AR'),
+      supportedLocales: const [Locale('es', 'AR'), Locale('es')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       navigatorKey: appNavigatorKey,
       title: 'CuentaClara',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF3366CC),
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3366CC)),
         useMaterial3: true,
       ),
 
@@ -124,22 +149,24 @@ class _CuentaClaraAppState extends State<CuentaClaraApp> {
         '/more': (_) => const MoreScreen(),
         '/profile': (_) => const ProfileScreen(),
         '/activity': (_) => const ActivityScreen(),
+        '/license-expired': (_) => const LicenseExpiredScreen(),
       },
 
       // Manejo de rutas no registradas
       onGenerateRoute: (settings) {
         debugPrint('onGenerateRoute: ${settings.name}');
         return MaterialPageRoute(
-          builder: (_) => Scaffold(
-            appBar: AppBar(title: const Text('Ruta no encontrada')),
-            body: Center(
-              child: Text(
-                'No existe la ruta "${settings.name}".\n'
-                'Agregala a MaterialApp.routes o usa push(MaterialPageRoute(...)).',
-                textAlign: TextAlign.center,
+          builder:
+              (_) => Scaffold(
+                appBar: AppBar(title: const Text('Ruta no encontrada')),
+                body: Center(
+                  child: Text(
+                    'No existe la ruta "${settings.name}".\n'
+                    'Agregala a MaterialApp.routes o usa push(MaterialPageRoute(...)).',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               ),
-            ),
-          ),
         );
       },
     );
@@ -184,12 +211,9 @@ class _AuthGateState extends State<_AuthGate> {
   @override
   Widget build(BuildContext context) {
     if (_checking) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return _logged ? const HomeScreen() : const LoginScreen();
   }
 }
-

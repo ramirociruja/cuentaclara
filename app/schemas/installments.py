@@ -23,7 +23,7 @@ class InstallmentOut(BaseModel):
     due_date: datetime       
     status: str  # Asegúrate de que "status" esté incluido
     is_paid: bool
-    loan_id: int
+    loan_id: Optional[int] = None
     is_overdue: bool  # Nueva propiedad para indicar si la cuota está vencida
     number: int  # Añadir el campo "number" para la cuota
     paid_amount: float

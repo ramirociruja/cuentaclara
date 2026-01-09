@@ -418,7 +418,11 @@ class ReceiptService {
     final paidCount = installments.where(_isPaidInstallment).length;
     final overdueCount =
         installments.where((i) => i.isOverdue && !_isPaidInstallment(i)).length;
-    final freqLabel = loan.frequency == 'weekly' ? 'Semanal' : 'Mensual';
+    final intervalDays = loan.installmentIntervalDays;
+    final intervalDaysLabel =
+        (intervalDays != null && intervalDays > 0)
+            ? 'Cada $intervalDays día${intervalDays == 1 ? '' : 's'}'
+            : '-';
 
     final nextPending = installments.firstWhere(
       (i) => !_isPaidInstallment(i),
@@ -520,7 +524,7 @@ class ReceiptService {
                   ['Cuotas (totales)', '${loan.installmentsCount}'],
                   ['Cuotas pagadas', '$paidCount'],
                   ['Cuotas vencidas', '$overdueCount'],
-                  ['Frecuencia', freqLabel],
+                  ['Intervalo', intervalDaysLabel],
                   ['Fecha de inicio', fmtDateStr(loan.startDate)],
                   ['Día de cobro', _dayNameEs(loan.collectionDay)],
                   if (loan.description != null &&

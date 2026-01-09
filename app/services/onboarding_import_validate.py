@@ -10,10 +10,21 @@ from openpyxl import load_workbook
 REQUIRED_SHEETS = ["Customers", "Loans", "Payments"]
 
 CUSTOMERS_REQUIRED = ["customer_ref", "first_name", "last_name"]
-LOANS_REQUIRED = ["loan_ref", "customer_ref", "amount", "total_due", "installments_count", "installment_amount", "frequency"]
+
+# ✅ CAMBIO: frequency ya no existe; ahora requerimos installment_interval_days
+LOANS_REQUIRED = [
+    "loan_ref",
+    "customer_ref",
+    "amount",
+    "total_due",
+    "installments_count",
+    "installment_amount",
+    "installment_interval_days",
+]
+
 PAYMENTS_REQUIRED = ["payment_ref", "loan_ref", "amount"]
 
-ALLOWED_FREQUENCY = {"weekly", "monthly"}
+# ❌ ELIMINADO: ALLOWED_FREQUENCY = {"weekly", "monthly"}
 ALLOWED_PAYMENT_TYPE = {"cash", "transfer", "other"}
 ALLOWED_LOAN_STATUS = {"active", "paid", "defaulted"}
 
@@ -138,6 +149,18 @@ def validate_onboarding_xlsx(file_bytes: bytes) -> Dict[str, Any]:
             if c not in cols:
                 errors.append(RowIssue(sheet, 1, c, "MISSING_COLUMN", f"Falta columna obligatoria: {c}"))
 
+        # ✅ opcional: si el template viejo trae frequency, avisamos (pero no bloqueamos)
+        if sheet == "Loans" and "frequency" in cols:
+            warnings.append(
+                RowIssue(
+                    "Loans",
+                    1,
+                    "frequency",
+                    "DEPRECATED_COLUMN",
+                    "La columna 'frequency' está deprecada y será ignorada; usar 'installment_interval_days'.",
+                )
+            )
+
     _ensure_required("Customers", customers, CUSTOMERS_REQUIRED)
     _ensure_required("Loans", loans, LOANS_REQUIRED)
     _ensure_required("Payments", payments, PAYMENTS_REQUIRED)
@@ -190,9 +213,18 @@ def validate_onboarding_xlsx(file_bytes: bytes) -> Dict[str, Any]:
         elif cref not in customer_refs:
             errors.append(RowIssue("Loans", rn, "customer_ref", "NOT_FOUND", f"customer_ref no existe en Customers: {cref}"))
 
-        freq = _as_str(l.get("frequency"))
-        if not freq or freq not in ALLOWED_FREQUENCY:
-            errors.append(RowIssue("Loans", rn, "frequency", "INVALID", "frequency debe ser weekly o monthly"))
+        # ✅ CAMBIO: validar installment_interval_days (frequency eliminado)
+        interval_days = _as_int(l.get("installment_interval_days"))
+        if interval_days is None or interval_days < 1:
+            errors.append(
+                RowIssue(
+                    "Loans",
+                    rn,
+                    "installment_interval_days",
+                    "INVALID",
+                    "installment_interval_days debe ser entero >= 1",
+                )
+            )
 
         amount = _as_float(l.get("amount"))
         total_due = _as_float(l.get("total_due"))
@@ -482,7 +514,10 @@ def _normalize_loans(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "total_due": _as_float(r.get("total_due")),
             "installments_count": _as_int(r.get("installments_count")),
             "installment_amount": _as_float(r.get("installment_amount")),
-            "frequency": _as_str(r.get("frequency")),
+
+            # ✅ CAMBIO: frequency eliminado; ahora interval days
+            "installment_interval_days": _as_int(r.get("installment_interval_days")),
+
             "start_date": sd.isoformat() if sd else None,
             "status": _as_str(r.get("status")) or "active",
             "description": _as_str(r.get("description")),

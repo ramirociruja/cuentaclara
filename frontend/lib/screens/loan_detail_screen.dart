@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/models/loan.dart';
 import 'package:frontend/models/installment.dart';
+import 'package:frontend/models/customer.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:frontend/services/receipt_service.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +9,7 @@ import 'package:frontend/screens/installment_detail_screen.dart';
 import 'package:frontend/screens/create_loan_or_purchase_screen.dart';
 import 'package:frontend/shared/status.dart';
 import 'package:frontend/screens/payment_detail_screen.dart';
+import 'package:frontend/screens/customer_detail_screen.dart';
 
 class LoanDetailScreen extends StatefulWidget {
   final int loanId;
@@ -58,38 +60,11 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
   static const Color secondaryColor = Color(0xFF00CC66);
   static const Color dangerColor = Color(0xFFFF4444);
 
-  String _installmentDisplayStatus(Installment i) {
-    // Si no está paga y está vencida → "Vencida" (flag rápido si viene seteado)
-    if (i.isPaid == false && i.isOverdue == true) {
-      return 'Vencida';
-    }
-    // Normalizar lo que venga del backend (cuotas)
-    final s = normalizeInstallmentStatus(i.status);
-    // Si no viene claro, inferimos por montos (EPS)
-    const eps = 0.01;
-    final paid = i.paidAmount;
-    final amt = i.amount;
-    if (paid >= amt - eps) return 'Pagada';
-    if (paid > eps) return 'Parcialmente pagada';
-
-    // Como último recurso, si venció y no hay pagos → Vencida
-    final today = DateTime.now();
-    if (i.dueDate.isBefore(DateTime(today.year, today.month, today.day))) {
-      return 'Vencida';
-    }
-    return s.isEmpty ? 'Pendiente' : s;
-  }
-
   // Evita falsos "falta pagar 0.00" por redondeos
   static const double kMoneyEps = 0.01;
 
   // Nombre del empleado (cobrador/creador) resuelto una sola vez
   late Future<String?> _employeeNameFut;
-
-  bool _isInstallmentPaid(Installment i) {
-    final remainingAbs = (i.amount - i.paidAmount).abs();
-    return i.isPaid || remainingAbs < kMoneyEps;
-  }
 
   late Future<List<Installment>> installments;
   late Future<Loan?> loanDetails;
@@ -130,17 +105,223 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
     setState(() => isLoading = false);
   }
 
+  // ---------- UI helpers (sin chips apilados) ----------
+
+  Widget _infoRow({
+    required IconData icon,
+    required String text,
+    Color? iconColor,
+    Color? textColor,
+    FontWeight fontWeight = FontWeight.w600,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: iconColor ?? Colors.grey.shade700),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 13,
+              color: textColor ?? Colors.grey.shade800,
+              fontWeight: fontWeight,
+              height: 1.2,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _weekdayEsFromIso(int isoDay) {
+    switch (isoDay) {
+      case 1:
+        return 'Lunes';
+      case 2:
+        return 'Martes';
+      case 3:
+        return 'Miércoles';
+      case 4:
+        return 'Jueves';
+      case 5:
+        return 'Viernes';
+      case 6:
+        return 'Sábado';
+      case 7:
+        return 'Domingo';
+      default:
+        return '—';
+    }
+  }
+
+  // ---------- Lógica cuotas ----------
+
+  String _installmentDisplayStatus(Installment i) {
+    // Si no está paga y está vencida → "Vencida" (flag rápido si viene seteado)
+    if (i.isPaid == false && i.isOverdue == true) {
+      return 'Vencida';
+    }
+
+    // Normalizar lo que venga del backend (cuotas)
+    final s = normalizeInstallmentStatus(i.status);
+
+    // Si no viene claro, inferimos por montos (EPS)
+    const eps = 0.01;
+    final paid = i.paidAmount;
+    final amt = i.amount;
+    if (paid >= amt - eps) return 'Pagada';
+    if (paid > eps) return 'Parcialmente pagada';
+
+    // Como último recurso, si venció y no hay pagos → Vencida
+    final today = DateTime.now();
+    if (i.dueDate.isBefore(DateTime(today.year, today.month, today.day))) {
+      return 'Vencida';
+    }
+
+    return s.isEmpty ? 'Pendiente' : s;
+  }
+
+  bool _isInstallmentPaid(Installment i) {
+    final remainingAbs = (i.amount - i.paidAmount).abs();
+    return i.isPaid || remainingAbs < kMoneyEps;
+  }
+
+  // ---------- Customer inline (sin chips) ----------
+
+  Widget _buildCustomerHeaderInline(Loan loan) {
+    return FutureBuilder<Customer>(
+      future: ApiService.fetchCustomerById(loan.customerId),
+      builder: (context, snap) {
+        final baseStyle = TextStyle(color: Colors.grey.shade700, fontSize: 13);
+
+        if (snap.connectionState == ConnectionState.waiting) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.person_outline,
+                  color: Colors.grey.shade600,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Text('Cliente: cargando...', style: baseStyle),
+              ],
+            ),
+          );
+        }
+
+        // Fallback si falla: mostramos el id sin romper la UI
+        if (snap.hasError || !snap.hasData) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.person_outline,
+                  color: Colors.grey.shade600,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Cliente #${loan.customerId}', style: baseStyle),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final changed = await Navigator.push<bool>(
+                      context,
+                      MaterialPageRoute(
+                        builder:
+                            (_) => CustomerDetailScreen(
+                              customerId: loan.customerId,
+                            ),
+                      ),
+                    );
+                    if (changed == true && mounted) await _refreshData();
+                  },
+                  child: const Text('Ver'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final c = snap.data!;
+        final dni = c.dni.trim();
+        final phone = c.phone.trim();
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.person, color: primaryColor, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      c.fullName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        color: Colors.black87,
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (dni.isNotEmpty) Text('DNI: $dni', style: baseStyle),
+                    if (phone.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text('Tel: $phone', style: baseStyle),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () async {
+                  final changed = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder:
+                          (_) =>
+                              CustomerDetailScreen(customerId: loan.customerId),
+                    ),
+                  );
+                  if (changed == true && mounted) await _refreshData();
+                },
+                child: const Text('Ver'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ---------- Header préstamo (sin chips apilados) ----------
+
   Widget _buildLoanHeader(Loan loan) {
     final startDate = DateTime.tryParse(loan.startDate) ?? DateTime.now();
     final formattedDate = DateFormat('dd/MM/yyyy').format(startDate);
 
-    // ⬇️ Normalizador de estado de PRÉSTAMO (UI ES)
     final displayStatus = normalizeLoanStatus(loan.status);
 
     final progress =
         loan.amount > 0 ? (loan.amount - loan.totalDue) / loan.amount : 0.0;
     final isFullyPaid =
         displayStatus.toLowerCase() == 'pagado' || progress >= 0.999;
+
+    final intervalDays = loan.installmentIntervalDays;
+    final hasInterval = intervalDays != null && intervalDays > 0;
+
+    final collectionDay = loan.collectionDay; // 1..7
+    final hasCollectionDay =
+        collectionDay != null && collectionDay >= 1 && collectionDay <= 7;
 
     return Card(
       elevation: 2,
@@ -154,6 +335,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Header: ID + Estado
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -170,22 +352,72 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                     displayStatus,
                     style: const TextStyle(color: Colors.white),
                   ),
-                  // ⬇️ Color unificado para PRÉSTAMO
                   backgroundColor: loanStatusColor(displayStatus),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+
+            // Cliente
+            _buildCustomerHeaderInline(loan),
+
+            const SizedBox(height: 10),
+            Divider(height: 1, color: Colors.grey.shade300),
+            const SizedBox(height: 10),
+
+            // Plan / Operativo (filas simples)
             if (loan.employeeName != null &&
                 loan.employeeName!.trim().isNotEmpty)
-              _buildDetailRow('Cobrador:', loan.employeeName!),
-            _buildDetailRow(
-              'Monto Total:',
-              currencyFormatter.format(loan.amount),
+              _infoRow(
+                icon: Icons.person_outline,
+                text: 'Cobrador: ${loan.employeeName!.trim()}',
+                iconColor: primaryColor,
+                fontWeight: FontWeight.w700,
+              ),
+            if (hasInterval) ...[
+              if (loan.employeeName != null &&
+                  loan.employeeName!.trim().isNotEmpty)
+                const SizedBox(height: 6),
+              _infoRow(
+                icon: Icons.calendar_month_outlined,
+                text:
+                    'Intervalo: cada $intervalDays día${intervalDays == 1 ? '' : 's'}',
+              ),
+            ],
+            if (hasCollectionDay) ...[
+              const SizedBox(height: 6),
+              _infoRow(
+                icon: Icons.event_available_outlined,
+                text: 'Día de cobro: ${_weekdayEsFromIso(collectionDay)}',
+              ),
+            ],
+
+            const SizedBox(height: 12),
+            Divider(height: 1, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+
+            // Jerarquía financiera: SALDO grande + secundarios
+            Text(
+              'Saldo pendiente',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            _buildDetailRow(
-              'Saldo Pendiente:',
+            const SizedBox(height: 2),
+            Text(
               currencyFormatter.format(loan.totalDue),
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                color: isFullyPaid ? secondaryColor : Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            _buildDetailRow(
+              'Monto total:',
+              currencyFormatter.format(loan.amount),
             ),
             _buildDetailRow(
               'Cuota:',
@@ -257,13 +489,8 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
           ),
           ...items.map((p) {
             final amount = (p['amount'] as num?)?.toDouble() ?? 0.0;
-            p['payment_date']?.toString();
-            try {} catch (_) {}
             final rawDate = p['payment_date'] ?? p['created_at'];
-            final when = _fmtLocal(
-              rawDate,
-              _dateTimeFmt,
-            ); // _dateTimeFmt = DateFormat('dd/MM/yyyy HH:mm')
+            final when = _fmtLocal(rawDate, _dateTimeFmt);
 
             final isVoided = p['is_voided'] == true;
 
@@ -336,10 +563,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                 const ListTile(title: Text('Pagos de esta cuota')),
                 ...items.map((p) {
                   final rawDate = p['payment_date'] ?? p['created_at'];
-                  final when = _fmtLocal(
-                    rawDate,
-                    _dateTimeFmt,
-                  ); // -> muestra en hora local
+                  final when = _fmtLocal(rawDate, _dateTimeFmt);
 
                   final id = (p['id'] as num?)?.toInt() ?? 0;
                   final amount = (p['amount'] as num?)?.toDouble() ?? 0.0;
@@ -401,7 +625,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
   }
 
   Widget _buildInstallmentItem(Installment installment) {
-    final status = _installmentDisplayStatus(installment); // 👈 unificado
+    final status = _installmentDisplayStatus(installment);
     final isPaid = status.toLowerCase() == 'pagada';
     const eps = 0.01;
     final remaining = (installment.amount - installment.paidAmount);
@@ -414,9 +638,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
 
     final dueDate = DateFormat('dd/MM/yyyy').format(installment.dueDate);
 
-    final chipColor = installmentStatusColor(
-      status,
-    ); // 👈 color UI centralizado
+    final chipColor = installmentStatusColor(status);
     final isOverdue = status.toLowerCase() == 'vencida';
 
     return Card(
@@ -446,7 +668,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // título + chip de estado (siempre)
+              // título + chip de estado (cuota)
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -510,7 +732,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
       ),
     );
     if (!mounted) return;
-    await _refreshData(); // refrescamos SIEMPRE al volver
+    await _refreshData();
   }
 
   Widget _buildDetailRow(String label, String value) {
@@ -556,15 +778,13 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
               tooltip: 'Compartir estado',
               icon: const Icon(Icons.picture_as_pdf_outlined),
               onPressed: () async {
-                final empName = await _employeeNameFut; // puede ser null
-                if (!mounted) {
-                  return; // 👈 evita usar context tras await si se desmontó
-                }
+                final empName = await _employeeNameFut;
+                if (!mounted) return;
                 await ReceiptService.shareLoanStatementByLoanId(
                   context,
                   widget.loanId,
-                  collectorName: empName, // “Cobrador”
-                  creatorName: empName, // “Creado por” (mismo por ahora)
+                  collectorName: empName,
+                  creatorName: empName,
                 );
               },
             ),
@@ -652,7 +872,6 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                     }
 
                     final loan = snapshot.data![0] as Loan;
-                    // Orden consistente 1→n en la UI también
                     final installmentsData =
                         (snapshot.data![1] as List<Installment>).toList()
                           ..sort((a, b) => a.number.compareTo(b.number));
@@ -667,7 +886,6 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                         child: Column(
                           children: [
                             _buildLoanHeader(loan),
-
                             const SizedBox(height: 8),
 
                             // LISTA DE CUOTAS
@@ -698,9 +916,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                               ),
                             ),
                             const SizedBox(height: 8),
-                            ...installmentsData.map(
-                              (i) => _buildInstallmentItem(i),
-                            ),
+                            ...installmentsData.map(_buildInstallmentItem),
                             const SizedBox(height: 20),
 
                             // HISTORIAL DE PAGOS
@@ -737,6 +953,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
           ),
     );
     if (confirm != true) return;
+
     try {
       final ok = await ApiService.cancelLoan(widget.loanId);
       if (!mounted) return;
@@ -780,6 +997,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
     try {
       final remaining = await ApiService.refinanceLoan(widget.loanId);
       if (!mounted) return;
+
       final goCreate = await showDialog<bool>(
         context: context,
         builder:

@@ -8,11 +8,11 @@ class Purchase {
   final double totalDue;
   final int installmentsCount;
   final double installmentAmount;
-  final String frequency;
+  final String? frequency;
   final DateTime startDate;
   final String status;
-  final int companyId;
   final List<Installment> installmentsList;
+  final int? installmentIntervalDays;
 
   Purchase({
     required this.id,
@@ -22,12 +22,12 @@ class Purchase {
     required this.totalDue,
     required this.installmentsCount,
     required this.installmentAmount,
-    required this.frequency,
+    this.frequency,
     required this.startDate,
     required this.status,
-    required this.companyId,
     this.installmentsList =
         const [], // Inicializa como una lista vacía si no se proporciona
+    this.installmentIntervalDays,
   });
 
   factory Purchase.fromJson(Map<String, dynamic> json) => Purchase(
@@ -38,14 +38,15 @@ class Purchase {
     totalDue: json['total_due'].toDouble(),
     installmentsCount: json['installments_count'],
     installmentAmount: json['installment_amount'].toDouble(),
-    frequency: json['frequency'],
+    frequency: json['frequency']?.toString(),
     startDate: DateTime.parse(json['start_date']),
     status: json['status'],
-    companyId: json['company_id'],
     installmentsList:
         (json['installments_list'] as List)
             .map((i) => Installment.fromJson(i))
             .toList(),
+    installmentIntervalDays:
+        (json['installment_interval_days'] as num?)?.toInt(),
   );
 
   Map<String, dynamic> toJson() {
@@ -59,6 +60,7 @@ class Purchase {
       'start_date': startDate,
       'status': status,
       'customer_id': customerId,
+      "installment_interval_days": installmentIntervalDays,
     };
   }
 }

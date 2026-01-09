@@ -96,7 +96,8 @@ class Loan(Base):
     total_due = Column(Float, nullable=False)  # Amount + interest
     installments_count = Column(Integer, nullable=False)
     installment_amount = Column(Float, nullable=False)
-    frequency = Column(String, nullable=False)  # "weekly" or "monthly"
+    frequency = Column(String, nullable=True)  # "weekly" or "monthly"
+    installment_interval_days = Column(Integer, nullable=True)  # nuevo: ej 1, 7, 15, 28
     start_date = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -137,7 +138,8 @@ class Purchase(Base):
 
     installments_count  = Column(Integer, nullable=False)
     installment_amount  = Column(Float, nullable=False)
-    frequency           = Column(String, nullable=False)  # "weekly" | "monthly"
+    frequency           = Column(String, nullable=True)  # "weekly" | "monthly"
+    installment_interval_days = Column(Integer, nullable=True)  # nuevo
 
     start_date = Column(
         DateTime(timezone=True),
