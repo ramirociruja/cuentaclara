@@ -246,7 +246,7 @@ def customer_dashboard(
         inst_base
         .filter(Installment.is_paid.is_(False))
         .filter(due_local_day < today_local)
-        .filter(Installment.status.notin_(["cancelled", "refinanced"]))
+        .filter(Installment.status.notin_(["cancelled", "refinanced", 'canceled']))
     )
 
     overdue_installments_count = overdue_q.with_entities(func.count(Installment.id)).scalar() or 0
