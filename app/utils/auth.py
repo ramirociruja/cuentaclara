@@ -99,6 +99,13 @@ def get_current_user(
 
     return employee
 
+def ensure_admin(current: models.Employee):
+    if current.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador puede realizar esta acción",
+        )
+
 # ===== Endpoints =====
 
 @router.post("/login", response_model=TokenPairResponse)

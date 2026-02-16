@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Routers (usar imports absolutos para evitar issues según cómo se ejecute uvicorn)
 from app.routes import admin_license, customers, employees, loans, installments, purchases, payments, companies, tasks, superadmin
+from app.routes.dashboard import router as dashboard_router
 from app.utils.auth import router as auth_router  # Router de autenticación
 
 # -----------------------------------------------------------------------------
@@ -136,6 +137,7 @@ app.include_router(installments.router,  prefix="/installments",  tags=["Install
 app.include_router(purchases.router,     prefix="/purchases",     tags=["Purchases"])
 app.include_router(payments.router,      prefix="/payments",      tags=["Payments"])
 app.include_router(companies.router,     prefix="/companies",     tags=["Companies"])
+app.include_router(dashboard_router)
 app.include_router(tasks.router)
 app.include_router(auth_router)
 app.include_router(admin_license.router, tags=["Admin"])

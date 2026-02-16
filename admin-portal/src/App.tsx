@@ -1,10 +1,21 @@
-import { Admin, Resource, List, Datagrid, TextField, NumberField , Layout} from "react-admin";
+import { Admin, Resource, List, Datagrid, TextField, NumberField, Layout, CustomRoutes } from "react-admin";
 import { authProvider } from "./app/authProvider";
 import { dataProvider } from "./app/dataProvider";
 import BulkPaymentsScreen from "./pages/BulkPayments/BulkPaymentsScreen";
-import { CustomRoutes } from "react-admin";
+import CouponsScreen from "./pages/Coupons/CouponsScreen";
+import DashboardScreen from "./pages/Dashboard/DashboardScreen";
 import { Route } from "react-router-dom";
 import { MyMenu } from "./app/MyMenu";
+
+import { CustomersList, CustomersCreate, CustomersEdit, CustomersShow } from "./resources/customers";
+import { LoanList, LoanCreate, LoanEdit, LoanShow } from "./resources/loans";
+import { PaymentsList, PaymentsShow, PaymentsEdit, LoanPaymentsCreate } from "./resources/payments";
+import { InstallmentShow, InstallmentsList } from "./resources/installments";
+import { EmployeesList } from "./resources/employees";
+import { i18nProvider } from "./i18nProvider";
+import { ServiceGate } from "./app/ServiceGate";
+import { ServiceSuspendedPage } from "./pages/ServiceSuspendedPage";
+
 
 function CollectableList() {
   return (
@@ -24,17 +35,51 @@ function CollectableList() {
   );
 }
 
-const MyLayout = (props: any) => <Layout {...props} menu={MyMenu} />;
+const MyLayout = (props: any) => <ServiceGate><Layout {...props} menu={MyMenu} /></ServiceGate>;
 
 export default function App() {
   return (
-    <Admin dataProvider={dataProvider} authProvider={authProvider} layout={MyLayout}>
+    <Admin
+      dataProvider={dataProvider}
+      i18nProvider={i18nProvider}
+      authProvider={authProvider}
+      layout={MyLayout}
+      dashboard={DashboardScreen}
+    >
+      <CustomRoutes noLayout>
+          <Route path="/service-suspended" element={<ServiceSuspendedPage />} />
+        </CustomRoutes>
       <CustomRoutes>
+        <Route path="/dashboard" element={<DashboardScreen />} />
         <Route path="/bulk-payments" element={<BulkPaymentsScreen />} />
+        <Route path="/coupons" element={<CouponsScreen />} />
       </CustomRoutes>
 
-      {/* Este resource apunta a tu endpoint nuevo */}
+      <Resource
+        name="customers"
+        list={CustomersList}
+        create={CustomersCreate}
+        edit={CustomersEdit}
+        show={CustomersShow}
+      />
+      <Resource
+        name="loans"
+        list={LoanList}
+        create={LoanCreate}
+        edit={LoanEdit}
+        show={LoanShow}
+      />
+      <Resource name="payments" list={PaymentsList} show={PaymentsShow} edit={PaymentsEdit} />
+      <Resource
+        name="installments"
+        list={InstallmentsList}
+        show={InstallmentShow}
+      />
+      <Resource name="employees" list={EmployeesList} />
+
       <Resource name="collectable" list={CollectableList} />
+      <Resource name="loan_payments" create={LoanPaymentsCreate} />
+
     </Admin>
   );
 }

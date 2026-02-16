@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/screens/overdue_screen.dart';
 import 'package:frontend/screens/weekly_summary_screen.dart';
+import 'package:frontend/utils/utils.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:frontend/services/api_service.dart';
@@ -50,8 +51,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _monday = _toMonday(now);
-    _sunday = _monday.add(const Duration(days: 6));
+    final monday = _toMonday(now);
+    _monday = startOfDayLocal(monday);
+    _sunday = endOfDayLocal(monday.add(const Duration(days: 6)));
     _bootstrap();
   }
 
@@ -122,12 +124,12 @@ class _HomeScreenState extends State<HomeScreen> {
         weeklyPaymentsTotal = acc;
       }
 
-      // 3) Todas las cuotas (para vencidas)
-      final allItems = await ApiService.fetchInstallmentsEnriched(
+      // 3) Cuotas vencidas (mismo criterio que OverdueScreen)
+      final overdueItems = await ApiService.fetchInstallmentsEnriched(
         employeeId: _employeeId!,
         dateFrom: null,
         dateTo: null,
-        statusFilter: '',
+        statusFilter: 'vencidas',
       );
 
       // 4) Créditos de la semana (si existe endpoint)
@@ -143,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // dejar en 0 si no está disponible aún
       }
 
-      _deriveMetrics(weeklyItems, allItems, weeklyPaymentsTotal);
+      _deriveMetrics(weeklyItems, overdueItems, weeklyPaymentsTotal);
 
       setState(() => _loading = false);
     } catch (e) {
@@ -163,26 +165,29 @@ class _HomeScreenState extends State<HomeScreen> {
     weeklyCollected = 0;
     overdueCount = 0;
 
-    final today = DateTime.now();
-
     for (final row in weekly) {
       final it = row.installment;
       weeklyDueAmount += it.amount;
     }
 
+    // ✅ all ahora es "overdueItems"
+    final seen = <int>{};
     for (final row in all) {
       final it = row.installment;
-      final s = (it.status).toLowerCase().trim();
-      final isPaid = it.isPaid == true || s == 'pagada';
-      if (!isPaid) {
-        final dueOnlyDate = DateTime(
-          it.dueDate.year,
-          it.dueDate.month,
-          it.dueDate.day,
-        );
-        final todayOnly = DateTime(today.year, today.month, today.day);
-        if (dueOnlyDate.isBefore(todayOnly)) overdueCount++;
-      }
+
+      final id = it.id;
+      if (seen.contains(id)) continue;
+      seen.add(id);
+
+      final st = (it.status).toLowerCase().trim();
+      final isOverdueFlag = (it as dynamic).isOverdue == true;
+
+      // seguridad: solo vencidas y no pagadas (misma lógica que OverdueScreen)
+      final isVencida = st == 'vencida' || isOverdueFlag;
+      final isPagada = (it.isPaid == true) || st == 'pagada';
+      if (!isVencida || isPagada) continue;
+
+      overdueCount++;
     }
 
     weeklyCollected = weeklyPaymentsTotal;
@@ -348,7 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         _kpiLine(title: 'A cobrar', value: goal),
                         const SizedBox(height: 8),
-                        _kpiLine(title: 'Cobrado', value: achieved),
+                        _kpiLine(title: 'Cobrado Total', value: achieved),
                       ],
                     ),
                   ),

@@ -8,8 +8,10 @@ EPS = 1e-6
 
 def _set_status_from_amounts(ins: Installment) -> None:
     """
-    Setea ins.status en función de amount/paid_amount y due_date.
-    Respeta strings típicos: 'paid' / 'overdue' / 'pending'.
+    Setea ins.status e ins.is_paid en función de amount/paid_amount y due_date.
+    Invariantes:
+      - status='paid'  <=> is_paid=True
+      - status!='paid' <=> is_paid=False
     """
     amt = float(ins.amount or 0.0)
     paid = float(ins.paid_amount or 0.0)
@@ -17,9 +19,17 @@ def _set_status_from_amounts(ins: Installment) -> None:
 
     if fully_paid:
         ins.status = "paid"
+        ins.is_paid = True          # ✅ FIX CLAVE
         return
 
-    # si no está paga, ver si venció
+    # si no está paga
+    ins.is_paid = False             # ✅ FIX CLAVE
+
+    if paid > EPS:
+        ins.status = "partial"
+        return
+
+    # ver si venció
     due = getattr(ins, "due_date", None)
     d: date | None = None
     if isinstance(due, datetime):
@@ -27,10 +37,12 @@ def _set_status_from_amounts(ins: Installment) -> None:
     elif isinstance(due, date):
         d = due
     today = datetime.utcnow().date()
+
     if d and d < today:
         ins.status = "overdue"
     else:
         ins.status = "pending"
+
 
 
 def recompute_ledger_for_loan(db: Session, loan_id: int) -> None:

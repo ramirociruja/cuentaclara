@@ -18,10 +18,14 @@
     "@tanstack/react-virtual": "^3.13.16",
     "ra-core": "^5.13.4",
     "ra-data-simple-rest": "^5.13.4",
+    "ra-i18n-polyglot": "^5.13.6",
+    "ra-language-english": "^5.13.6",
+    "ra-language-spanish": "^1.0.0",
     "react": "^19.2.0",
     "react-admin": "^5.13.4",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.11.0"
+    "react-router-dom": "^7.11.0",
+    "recharts": "^3.7.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

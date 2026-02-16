@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
-from datetime import datetime
+from typing import List, Optional
+from datetime import date, datetime
 
 # ---------- Base (entrada) ----------
 class CustomerBase(BaseModel):
@@ -68,3 +68,52 @@ class CustomerOut(BaseModel):
 
     class Config:
         from_attributes = True  # (pydantic v2)
+
+
+
+class CustomerDashboardOut(BaseModel):
+    customer_id: int
+
+    total_due: float               # saldo total del cliente (sum loan.total_due de loans efectivos)
+    active_loans_count: int        # loans efectivos con saldo > 0
+    loans_total_count: int         # total loans del cliente (incluye cancel/refinanced/paid)
+
+    overdue_installments_count: int
+    overdue_amount: float          # suma de saldos vencidos (amount - paid_amount)
+
+    next_due_date: Optional[date] = None
+    next_due_amount: Optional[float] = None  # saldo de la próxima cuota (amount - paid_amount)
+
+
+
+
+class CustomerLoanRowOut(BaseModel):
+    loan_id: int
+    status: Optional[str] = None
+
+    amount: float = 0.0
+    total_due: float = 0.0  # saldo actual (Loan.total_due)
+
+    installments_count: Optional[int] = None
+    installment_amount: Optional[float] = None
+    installment_interval_days: Optional[int] = None
+    start_date: Optional[str] = None  # ISO (opcional)
+
+    collector_id: Optional[int] = None
+    collector_name: Optional[str] = None
+    description: Optional[str] = None
+
+    overdue_installments_count: int = 0
+    overdue_amount: float = 0.0
+
+    next_due_date: Optional[date] = None
+    next_due_amount: Optional[float] = None
+
+class CustomerLoansOut(BaseModel):
+    customer_id: int
+    active_only: bool
+    total_count: int
+    total_due: float
+    overdue_amount: float
+    overdue_installments_count: int
+    loans: List[CustomerLoanRowOut]

@@ -147,3 +147,74 @@ def update_status_if_fully_paid(db: Session, loan_id: int | None, purchase_id: i
             db.add(purchase)
 
     db.commit()
+
+
+def normalize_loan_status_filter(raw: str | None) -> str | None:
+    """
+    Recibe status desde query params (puede venir EN canónico o ES UI/legacy)
+    y devuelve el status EN canónico para filtrar en DB.
+    """
+    if not raw:
+        return None
+
+    s = raw.strip().lower()
+    if not s:
+        return None
+
+    # EN canónico (o variantes)
+    if s in {"active", "paid", "defaulted", "refinanced"}:
+        return s
+    if s in {"canceled", "cancelled"}:
+        return LoanStatus.CANCELED.value
+
+    # ES / legacy (como UI)
+    mapping = {
+        "activo": LoanStatus.ACTIVE.value,
+        "pagado": LoanStatus.PAID.value,
+        "pagada": LoanStatus.PAID.value,
+        "incumplido": LoanStatus.DEFAULTED.value,
+        "en mora": LoanStatus.DEFAULTED.value,
+        "cancelado": LoanStatus.CANCELED.value,
+        "cancelada": LoanStatus.CANCELED.value,
+        "refinanciado": LoanStatus.REFINANCED.value,
+        "refinanciada": LoanStatus.REFINANCED.value,
+    }
+
+    return mapping.get(s)
+
+
+
+def normalize_installment_status_filter(raw: str | None) -> str | None:
+    """
+    Recibe status desde query params (puede venir EN canónico o ES UI/legacy)
+    y devuelve el status EN canónico para filtrar en DB.
+    """
+    if not raw:
+        return None
+
+    s = raw.strip().lower()
+    if not s:
+        return None
+
+    # EN canónico (o variantes)
+    if s in {"pending", "partial", "paid", "overdue", "refinanced"}:
+        return s
+    if s in {"canceled", "cancelled"}:
+        return InstallmentStatus.CANCELED.value
+
+    # ES / legacy (como UI)
+    mapping = {
+        "pendiente": InstallmentStatus.PENDING.value,
+        "parcial": InstallmentStatus.PARTIAL.value,
+        "parcialmente pagada": InstallmentStatus.PARTIAL.value,
+        "pagada": InstallmentStatus.PAID.value,
+        "pagado": InstallmentStatus.PAID.value,
+        "vencida": InstallmentStatus.OVERDUE.value,
+        "vencido": InstallmentStatus.OVERDUE.value,
+        "cancelada": InstallmentStatus.CANCELED.value,
+        "cancelado": InstallmentStatus.CANCELED.value,
+        "refinanciada": InstallmentStatus.REFINANCED.value,
+        "refinanciado": InstallmentStatus.REFINANCED.value,
+    }
+
+    return mapping.get(s)

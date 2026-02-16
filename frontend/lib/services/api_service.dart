@@ -710,7 +710,9 @@ class ApiService {
 
   static Future<List<Loan>> fetchLoansByCustomer(int customerId) async {
     final response = await _get(
-      Uri.parse('$baseUrl/loans/customer/$customerId'),
+      Uri.parse(
+        '$baseUrl/loans/customer/$customerId?include_installments=true',
+      ),
     );
 
     if (response.statusCode == 200) {
@@ -1243,6 +1245,11 @@ class ApiService {
       '&date_to=${dateTo.toUtc().toIso8601String()}',
     );
     final resp = await _get(url);
+    final rawBody = utf8.decode(resp.bodyBytes);
+    // ignore: avoid_print
+    print('DEBUG /payments/summary status=${resp.statusCode}');
+    // ignore: avoid_print
+    print('DEBUG /payments/summary body=$rawBody');
     if (resp.statusCode == 200) {
       final data = _json(resp) as Map<String, dynamic>;
       return (data['total_amount'] ?? 0).toDouble();

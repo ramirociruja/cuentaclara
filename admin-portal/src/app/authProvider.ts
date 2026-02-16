@@ -60,10 +60,11 @@ export const authProvider: AuthProvider = {
 
   checkError: async (error) => {
     const status = error?.status;
-    if (status === 401 || status === 403) {
-      // si falla refresh, se limpiará igual en httpClient
-      return Promise.reject();
-    }
+
+    // 401 = no autenticado / token inválido -> forzar login
+    if (status === 401) return Promise.reject();
+
+    // 403 = autenticado pero sin permisos -> NO desloguear
     return Promise.resolve();
   },
 

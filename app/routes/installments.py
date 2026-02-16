@@ -196,6 +196,7 @@ def pay_installment(
 def collectable_per_loan(
     q: Optional[str] = Query(None),
     collector_id: Optional[int] = Query(None),
+    province: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     tz: Optional[str] = Query(None),
@@ -228,6 +229,7 @@ def collectable_per_loan(
             Employee.id.label("collector_id"),
             Employee.name.label("collector_name"),
             Customer.id.label("customer_id"),
+            Customer.province.label("customer_province"),
             func.btrim(func.concat_ws(" ", Customer.first_name, Customer.last_name)).label("customer_name"),
             Customer.phone.label("customer_phone"),
             Installment.id.label("installment_id"),
@@ -253,6 +255,9 @@ def collectable_per_loan(
 
     if collector_id is not None:
         base = base.filter(Loan.employee_id == collector_id)
+
+    if province and province.strip():
+        base = base.filter(Customer.province == province.strip())
 
     if q:
         like = f"%{q.strip()}%"
@@ -300,6 +305,7 @@ def collectable_per_loan(
                 "collector_name": r.collector_name or "Sin asignar",
                 "customer_id": int(r.customer_id),
                 "customer_name": r.customer_name or "",
+                "customer_province": r.customer_province,  # <-- NUEVO
                 "customer_phone": r.customer_phone,
                 "installment_id": int(r.installment_id),
                 "installment_number": int(r.installment_number or 0),
@@ -319,75 +325,110 @@ def collectable_per_loan(
 # =========================
 @router.get("/", response_model=List[InstallmentListOut])
 def get_all_installment(
-    employee_id: Optional[int] = None,
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
-    only_pending: Optional[bool] = None,
-    status: Optional[str] = None,
-    province: Optional[str] = Query(None),   # 👈 NUEVO (opcional)
+    employee_id: Optional[int] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+
+    # alias para admin-portal
+    due_from: Optional[str] = Query(None),
+    due_to: Optional[str] = Query(None),
+
+    only_pending: Optional[bool] = Query(None),
+    status: Optional[str] = Query(None),
+    province: Optional[str] = Query(None),
+
+    # filtros extra
+    q: Optional[str] = Query(None),
+    loan_id: Optional[int] = Query(None),
+
     tz: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
     zone = ZoneInfo(tz) if tz else AR_TZ
 
-    q = (
+    def _looks_like_date(s: Optional[str]) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+    # compat: admin-portal usa due_from/due_to (YYYY-MM-DD)
+    if date_from is None and _looks_like_date(due_from):
+        date_from = date.fromisoformat(due_from)
+    if date_to is None and _looks_like_date(due_to):
+        date_to = date.fromisoformat(due_to)
+
+    qy = (
         db.query(
             Installment,
             case(
                 (Installment.loan_id.is_not(None), "loan"),
                 else_="purchase",
             ).label("debt_type"),
-            func.btrim(func.concat_ws(' ', Customer.first_name, Customer.last_name)).label("customer_name"),
+            func.btrim(func.concat_ws(" ", Customer.first_name, Customer.last_name)).label("customer_name"),
             Customer.id.label("customer_id"),
             Customer.phone.label("customer_phone"),
             Loan.collection_day.label("collection_day"),
-            Customer.province.label("customer_province"),        # 👈 NUEVO en SELECT
+            Customer.province.label("customer_province"),
         )
         .outerjoin(Loan, Installment.loan_id == Loan.id)
         .outerjoin(Purchase, Installment.purchase_id == Purchase.id)
-        .outerjoin(
-            Customer,
-            or_(Customer.id == Loan.customer_id, Customer.id == Purchase.customer_id)
-        )
+        .outerjoin(Customer, or_(Customer.id == Loan.customer_id, Customer.id == Purchase.customer_id))
         .filter(Customer.company_id == current.company_id)
         .filter(loan_is_effective_clause(Installment, Loan))
     )
 
+    # filtro por cobrador
     if employee_id is not None:
-        q = q.filter(
+        qy = qy.filter(
             or_(
-                # Cuotas de PRÉSTAMOS: usar el dueño del préstamo
-                and_(
-                    Installment.loan_id.is_not(None),
-                    Loan.employee_id == employee_id,
-                ),
-                # Cuotas de COMPRAS: seguimos usando el owner del cliente
-                and_(
-                    Installment.loan_id.is_(None),
-                    Customer.employee_id == employee_id,
-                ),
+                # Cuotas de PRÉSTAMOS: dueño del préstamo
+                and_(Installment.loan_id.is_not(None), Loan.employee_id == employee_id),
+                # Cuotas de COMPRAS: owner del cliente
+                and_(Installment.loan_id.is_(None), Customer.employee_id == employee_id),
             )
         )
 
-    # 👇 filtro por provincia (sólo si viene)
-    if province:
-        q = q.filter(Customer.province == province)
+    # filtro por loan_id (solo préstamos)
+    if loan_id is not None:
+        qy = qy.filter(Installment.loan_id == loan_id)
 
-    # Rango local → ventana UTC
-    if date_from is not None and date_to is not None:
-        start_utc, end_utc_excl = local_dates_to_utc_window(date_from, date_to, zone)
-        q = q.filter(Installment.due_date >= start_utc)
-        q = q.filter(Installment.due_date <  end_utc_excl)
+    # búsqueda por cliente/teléfono
+    q_str = (q or "").strip()
+    if q_str:
+        like = f"%{q_str}%"
+        qy = qy.filter(
+            or_(
+                Customer.first_name.ilike(like),
+                Customer.last_name.ilike(like),
+                Customer.phone.ilike(like),
+            )
+        )
+
+    # filtro por provincia
+    prov = (province or "").strip()
+    if prov:
+        qy = qy.filter(Customer.province == prov)
+
+    # ✅ rango por due_date con soporte parcial (from/to)
+    if date_from is not None or date_to is not None:
+        if date_from is not None and date_to is not None:
+            start_utc, end_utc_excl = local_dates_to_utc_window(date_from, date_to, zone)
+            qy = qy.filter(Installment.due_date >= start_utc)
+            qy = qy.filter(Installment.due_date < end_utc_excl)
+        elif date_from is not None and date_to is None:
+            start_utc, _ = local_dates_to_utc_window(date_from, date_from, zone)
+            qy = qy.filter(Installment.due_date >= start_utc)
+        elif date_to is not None and date_from is None:
+            _, end_utc_excl = local_dates_to_utc_window(date_to, date_to, zone)
+            qy = qy.filter(Installment.due_date < end_utc_excl)
 
     if only_pending is True:
-        q = q.filter(Installment.is_paid.is_(False))
+        qy = qy.filter(Installment.is_paid.is_(False))
 
-    if status is not None:
+    if status is not None and str(status).strip() != "":
         normalized = norm_installment_status(status).value
-        q = q.filter(Installment.status == normalized)
+        qy = qy.filter(Installment.status == normalized)
 
-    rows = q.order_by(Installment.due_date.asc(), Installment.id.asc()).all()
+    rows = qy.order_by(Installment.due_date.asc(), Installment.id.asc()).all()
 
     out: list[InstallmentListOut] = []
     today_local = datetime.now(zone).date()
@@ -399,7 +440,7 @@ def get_all_installment(
         customer_id,
         customer_phone,
         collection_day,
-        customer_province,          # 👈 NUEVO en unpack
+        customer_province,
     ) in rows:
         amount = float(inst.amount or 0.0)
 
@@ -437,13 +478,182 @@ def get_all_installment(
                 customer_id=customer_id,
                 customer_phone=customer_phone,
                 collection_day=collection_day,
-                customer_province=customer_province,  # 👈 NUEVO en salida
+                customer_province=customer_province,
             )
         )
+
     return out
 
 
+@router.get("/summary", response_model=InstallmentSummaryOut)
+def installments_summary(
+    employee_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    province: Optional[str] = Query(None),   # 👈 NUEVO (opcional)
+    tz: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    zone = ZoneInfo(tz) if tz else AR_TZ
 
+    base = (
+        db.query(Installment)
+          .outerjoin(Loan, Installment.loan_id == Loan.id)
+          .outerjoin(Purchase, Installment.purchase_id == Purchase.id)
+          .outerjoin(
+              Customer,
+              or_(Customer.id == Loan.customer_id, Customer.id == Purchase.customer_id)
+          )
+          .filter(Customer.company_id == current.company_id)
+          .filter(loan_is_effective_clause(Installment, Loan))  # excluir loans bloqueados
+    )
+
+    if employee_id is not None:
+        base = base.filter(
+            or_(
+                # Cuotas de PRÉSTAMOS: usar el dueño del préstamo
+                and_(
+                    Installment.loan_id.is_not(None),
+                    Loan.employee_id == employee_id,
+                ),
+                # Cuotas de COMPRAS: seguimos usando el owner del cliente
+                and_(
+                    Installment.loan_id.is_(None),
+                    Customer.employee_id == employee_id,
+                ),
+            )
+        )
+
+    # 👇 filtro por provincia (sólo si viene)
+    if province:
+        base = base.filter(Customer.province == province)
+
+    # Rango local → ventana UTC
+    if date_from is not None and date_to is not None:
+        start_utc, end_utc_excl = local_dates_to_utc_window(date_from, date_to, zone)
+        base = base.filter(Installment.due_date >= start_utc)
+        base = base.filter(Installment.due_date <  end_utc_excl)
+
+    pending_count = base.filter(Installment.is_paid.is_(False)).count()
+    paid_count    = base.filter(Installment.is_paid.is_(True)).count()
+
+    # overdue por día LOCAL
+    rows_due = base.with_entities(Installment.id, Installment.due_date, Installment.is_paid).all()
+    today_local = datetime.now(zone).date()
+    overdue_count = 0
+    for _id, dd, is_paid in rows_due:
+        if bool(is_paid):
+            continue
+        due_local = dd.astimezone(zone).date() if isinstance(dd, datetime) else dd
+        if due_local and due_local < today_local:
+            overdue_count += 1
+
+    total_amount = float(
+        base.with_entities(func.coalesce(func.sum(Installment.amount), 0.0)).scalar() or 0.0
+    )
+    pending_amount = float(
+        base.filter(Installment.is_paid.is_(False))
+            .with_entities(func.coalesce(func.sum(Installment.amount), 0.0))
+            .scalar() or 0.0
+    )
+
+    return InstallmentSummaryOut(
+        pending_count=int(pending_count or 0),
+        paid_count=int(paid_count or 0),
+        overdue_count=int(overdue_count or 0),
+        total_amount=total_amount,
+        pending_amount=pending_amount,
+    )
+
+
+
+@router.get("/{installment_id}", response_model=InstallmentListOut)
+def get_installment_by_id(
+    installment_id: int,
+    tz: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    zone = ZoneInfo(tz) if tz else AR_TZ
+
+    # Scope por company (404 si no corresponde)
+    _ = _get_installment_scoped(installment_id, db, current)
+
+    row = (
+        db.query(
+            Installment,
+            case(
+                (Installment.loan_id.is_not(None), "loan"),
+                else_="purchase",
+            ).label("debt_type"),
+            func.btrim(func.concat_ws(" ", Customer.first_name, Customer.last_name)).label("customer_name"),
+            Customer.id.label("customer_id"),
+            Customer.phone.label("customer_phone"),
+            Loan.collection_day.label("collection_day"),
+            Customer.province.label("customer_province"),
+        )
+        .outerjoin(Loan, Installment.loan_id == Loan.id)
+        .outerjoin(Purchase, Installment.purchase_id == Purchase.id)
+        .outerjoin(
+            Customer,
+            or_(Customer.id == Loan.customer_id, Customer.id == Purchase.customer_id),
+        )
+        .filter(Installment.id == installment_id)
+        .filter(Customer.company_id == current.company_id)
+        .first()
+    )
+
+    if not row:
+        _404()
+
+    (
+        inst,
+        debt_type,
+        customer_name,
+        customer_id,
+        customer_phone,
+        collection_day,
+        customer_province,
+    ) = row
+
+    # Normalizar due_date a fecha local (igual que en list)
+    today_local = datetime.now(zone).date()
+    due_dt = getattr(inst, "due_date", None)
+    if isinstance(due_dt, datetime):
+        due_only = due_dt.astimezone(zone).date()
+    else:
+        due_only = due_dt or today_local
+
+    is_paid = bool(getattr(inst, "is_paid", getattr(inst, "paid", False)))
+    status_val = inst.status or (InstallmentStatus.PAID.value if is_paid else InstallmentStatus.PENDING.value)
+
+    number = int(getattr(inst, "number", 0) or 0)
+    paid_amount = float(getattr(inst, "paid_amount", 0.0) or 0.0)
+
+    iso_db = getattr(inst, "is_overdue", None)
+    if iso_db is None:
+        is_overdue = (not is_paid) and (due_only < today_local)
+    else:
+        is_overdue = bool(iso_db)
+
+    return InstallmentListOut(
+        id=inst.id,
+        amount=float(inst.amount or 0.0),
+        due_date=due_only,
+        status=status_val,
+        is_paid=is_paid,
+        loan_id=inst.loan_id,
+        is_overdue=is_overdue,
+        number=number,
+        paid_amount=paid_amount,
+        collection_day=collection_day,
+        customer_name=customer_name,
+        debt_type=debt_type,
+        customer_id=customer_id,
+        customer_phone=customer_phone,
+        customer_province=customer_province,
+    )
 
 
 # =========================
@@ -597,89 +807,6 @@ def get_overdue_installment_count_by_customer(
         Installment.is_paid == False  # noqa: E712
     ).count()
     return int(overdue_installment_count or 0)
-
-
-@router.get("/summary", response_model=InstallmentSummaryOut)
-def installments_summary(
-    employee_id: Optional[int] = None,
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
-    province: Optional[str] = Query(None),   # 👈 NUEVO (opcional)
-    tz: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-    current: Employee = Depends(get_current_user),
-):
-    zone = ZoneInfo(tz) if tz else AR_TZ
-
-    base = (
-        db.query(Installment)
-          .outerjoin(Loan, Installment.loan_id == Loan.id)
-          .outerjoin(Purchase, Installment.purchase_id == Purchase.id)
-          .outerjoin(
-              Customer,
-              or_(Customer.id == Loan.customer_id, Customer.id == Purchase.customer_id)
-          )
-          .filter(Customer.company_id == current.company_id)
-          .filter(loan_is_effective_clause(Installment, Loan))  # excluir loans bloqueados
-    )
-
-    if employee_id is not None:
-        base = base.filter(
-            or_(
-                # Cuotas de PRÉSTAMOS: usar el dueño del préstamo
-                and_(
-                    Installment.loan_id.is_not(None),
-                    Loan.employee_id == employee_id,
-                ),
-                # Cuotas de COMPRAS: seguimos usando el owner del cliente
-                and_(
-                    Installment.loan_id.is_(None),
-                    Customer.employee_id == employee_id,
-                ),
-            )
-        )
-
-    # 👇 filtro por provincia (sólo si viene)
-    if province:
-        base = base.filter(Customer.province == province)
-
-    # Rango local → ventana UTC
-    if date_from is not None and date_to is not None:
-        start_utc, end_utc_excl = local_dates_to_utc_window(date_from, date_to, zone)
-        base = base.filter(Installment.due_date >= start_utc)
-        base = base.filter(Installment.due_date <  end_utc_excl)
-
-    pending_count = base.filter(Installment.is_paid.is_(False)).count()
-    paid_count    = base.filter(Installment.is_paid.is_(True)).count()
-
-    # overdue por día LOCAL
-    rows_due = base.with_entities(Installment.id, Installment.due_date, Installment.is_paid).all()
-    today_local = datetime.now(zone).date()
-    overdue_count = 0
-    for _id, dd, is_paid in rows_due:
-        if bool(is_paid):
-            continue
-        due_local = dd.astimezone(zone).date() if isinstance(dd, datetime) else dd
-        if due_local and due_local < today_local:
-            overdue_count += 1
-
-    total_amount = float(
-        base.with_entities(func.coalesce(func.sum(Installment.amount), 0.0)).scalar() or 0.0
-    )
-    pending_amount = float(
-        base.filter(Installment.is_paid.is_(False))
-            .with_entities(func.coalesce(func.sum(Installment.amount), 0.0))
-            .scalar() or 0.0
-    )
-
-    return InstallmentSummaryOut(
-        pending_count=int(pending_count or 0),
-        paid_count=int(paid_count or 0),
-        overdue_count=int(overdue_count or 0),
-        total_amount=total_amount,
-        pending_amount=pending_amount,
-    )
-
 
 
 from app.schemas.installments import InstallmentOut, InstallmentUpdate

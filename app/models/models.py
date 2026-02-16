@@ -104,9 +104,31 @@ class Loan(Base):
         nullable=False,
     )
     status = Column(String, default=LoanStatus.ACTIVE.value)  # "active", "paid", "defaulted"
+
+    status_changed_at = Column(DateTime(timezone=True), nullable=True)
+    status_reason = Column(String, nullable=True)
+
+    
     description = Column(String, nullable=True)
     collection_day = Column(Integer, nullable=True)  # 1..7 (ISO: lunes=1)
     
+     # --- NUEVO: tracking refinanciación ---
+    refinanced_from_loan_id = Column(Integer, ForeignKey("loans.id"), nullable=True, index=True)
+    refinanced_to_loan_id = Column(Integer, ForeignKey("loans.id"), nullable=True, index=True)
+
+    refinanced_from_loan = relationship(
+        "Loan",
+        foreign_keys=[refinanced_from_loan_id],
+        remote_side=[id],
+        uselist=False,
+        post_update=True,
+    )
+    refinanced_to_loan = relationship(
+        "Loan",
+        foreign_keys=[refinanced_to_loan_id],
+        uselist=False,
+        post_update=True,
+    )
     
     
     company = relationship("Company", back_populates="loans")  # Relación bidireccional
@@ -148,6 +170,9 @@ class Purchase(Base):
     )
 
     status = Column(String, default=LoanStatus.ACTIVE.value)  # "active","paid","defaulted"
+
+    status_changed_at = Column(DateTime(timezone=True), nullable=True)
+    status_reason = Column(String, nullable=True)
 
     # Equivalentes a Loan
     description    = Column(String, nullable=True)

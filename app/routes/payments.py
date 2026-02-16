@@ -18,6 +18,9 @@ from app.models.models import (
     PaymentAllocation,
 )
 from app.schemas.payments import (
+    BulkPaymentApplyIn,
+    BulkPaymentApplyOut,
+    BulkPaymentItemOut,
     PaymentCreate,
     PaymentOut,
     PaymentDetailOut,
@@ -205,33 +208,47 @@ def mark_next_installment_pending(db: Session, loan_id: int = None, purchase_id:
         db.commit()
 
 
-# Get all payments
+from typing import Optional
+from zoneinfo import ZoneInfo
+from datetime import date, datetime
+from fastapi import Depends, Query
+from sqlalchemy.orm import Session, aliased, joinedload
+from sqlalchemy import or_
+
 @router.get("/", response_model=list[PaymentOut])
 def list_payments(
-    start_date: str | None = Query(None),
-    end_date: str | None = Query(None),
-    employee_id: int | None = Query(None),
-    province: str | None = Query(None),   # 👈 opcional
+    # ✅ compat: aceptar date_from/date_to (Flutter) y start_date/end_date (legacy/admin)
+    date_from: Optional[str] = Query(None, alias="date_from"),
+    date_to:   Optional[str] = Query(None, alias="date_to"),
+    start_date: Optional[str] = Query(None, alias="start_date"),
+    end_date:   Optional[str] = Query(None, alias="end_date"),
+
+    employee_id: int | None = Query(None),          # <- sigue siendo "employee_id" pero filtra por collector_id
+    province: str | None = Query(None),
     tz: str | None = Query(None),
+
     db: Session = Depends(get_db),
     current: Employee = Depends(get_current_user),
 ):
+    # Elegir fuente real de fechas
+    raw_from = date_from or start_date
+    raw_to   = date_to   or end_date
+
     zone = ZoneInfo(tz) if tz else AR_TZ
 
     def _looks_like_date(s: str | None) -> bool:
-        return bool(s) and len(s) == 10 and s[4] == '-' and s[7] == '-'
+        return bool(s) and len(s) == 10 and s[4] == "-" and s[7] == "-"
 
-    start_utc = None
-    end_utc_excl = None
+    start_utc: datetime | None = None
+    end_utc_excl: datetime | None = None
 
-    if _looks_like_date(start_date) and _looks_like_date(end_date):
-        dfrom = date.fromisoformat(start_date) if start_date else None
-        dto   = date.fromisoformat(end_date)   if end_date   else None
-        if dfrom and dto:
-            start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    if raw_from and raw_to and _looks_like_date(raw_from) and _looks_like_date(raw_to):
+        dfrom = date.fromisoformat(raw_from)
+        dto   = date.fromisoformat(raw_to)
+        start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
     else:
-        start_utc = parse_iso_aware_utc(start_date)
-        end_utc   = parse_iso_aware_utc(end_date)
+        start_utc = parse_iso_aware_utc(raw_from)
+        end_utc   = parse_iso_aware_utc(raw_to)
         end_utc_excl = end_utc
 
     L  = aliased(Loan)
@@ -249,13 +266,9 @@ def list_payments(
               joinedload(Payment.loan).joinedload(Loan.customer),
               joinedload(Payment.purchase).joinedload(Purchase.customer),
           )
-          .filter(Payment.is_voided == False)
-          .filter(
-              or_(
-                  CL.company_id == current.company_id,
-                  CP.company_id == current.company_id,
-              )
-          )
+          .filter(Payment.is_voided.is_(False))
+          .filter(or_(CL.company_id == current.company_id,
+                      CP.company_id == current.company_id))
     )
 
     if start_utc is not None:
@@ -263,7 +276,7 @@ def list_payments(
     if end_utc_excl is not None:
         q = q.filter(Payment.payment_date < end_utc_excl)
 
-    # 🔴 AQUÍ el cambio: usar collector_id
+    # ✅ sigue llegando como employee_id, pero filtramos por collector_id (compat con app)
     if employee_id is not None:
         q = q.filter(Payment.collector_id == employee_id)
 
@@ -295,6 +308,172 @@ def list_payments(
 
     return out
 
+@router.get("/all")
+def list_payments_all(
+    # ✅ compat: aceptar date_from/date_to (Flutter) y start_date/end_date (legacy/admin)
+    date_from: Optional[str] = Query(None, alias="date_from"),
+    date_to: Optional[str] = Query(None, alias="date_to"),
+    start_date: Optional[str] = Query(None, alias="start_date"),
+    end_date: Optional[str] = Query(None, alias="end_date"),
+
+    # filtros
+    employee_id: Optional[int] = Query(None),  # filtra por collector_id (compat)
+    province: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),  # ✅ nuevo: cliente/teléfono/id pago
+    tz: Optional[str] = Query(None),
+
+    # ✅ NUEVO: voided
+    include_voided: bool = Query(False),
+    is_voided: Optional[bool] = Query(None),  # true|false -> fuerza; None -> usa include_voided
+
+    # ✅ paginado SIEMPRE
+    limit: int = Query(25, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    # Elegir fuente real de fechas
+    raw_from = date_from or start_date
+    raw_to = date_to or end_date
+
+    zone = ZoneInfo(tz) if tz else AR_TZ
+
+    def _looks_like_date(s: str | None) -> bool:
+        return bool(s) and len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+    start_utc: datetime | None = None
+    end_utc_excl: datetime | None = None
+
+    if raw_from and raw_to and _looks_like_date(raw_from) and _looks_like_date(raw_to):
+        dfrom = date.fromisoformat(raw_from)
+        dto = date.fromisoformat(raw_to)
+        start_utc, end_utc_excl = local_dates_to_utc_window(dfrom, dto, zone)
+    else:
+        start_utc = parse_iso_aware_utc(raw_from)
+        end_utc = parse_iso_aware_utc(raw_to)
+        end_utc_excl = end_utc
+
+    # Aliases
+    L = aliased(Loan)
+    P = aliased(Purchase)
+    CL = aliased(Customer)
+    CP = aliased(Customer)
+
+    # Si el current es cobrador, lo forzamos (mismo patrón que Loans)
+    effective_employee_id = employee_id
+    if (getattr(current, "role", "") or "").lower() == "collector":
+        effective_employee_id = current.id
+
+    # ============================================================
+    # 1) Query base de IDs (para COUNT + paginado)
+    # ============================================================
+    base_ids = (
+        db.query(
+            Payment.id.label("id"),
+            Payment.payment_date.label("payment_date"),
+        )
+        .outerjoin(L, Payment.loan_id == L.id)
+        .outerjoin(CL, L.customer_id == CL.id)
+        .outerjoin(P, Payment.purchase_id == P.id)
+        .outerjoin(CP, P.customer_id == CP.id)
+        .filter(or_(CL.company_id == current.company_id, CP.company_id == current.company_id))
+    )
+
+    # ✅ voided logic (no rompe default)
+    if is_voided is True:
+        base_ids = base_ids.filter(Payment.is_voided.is_(True))
+    elif is_voided is False:
+        base_ids = base_ids.filter(Payment.is_voided.is_(False))
+    else:
+        # is_voided is None: respetar include_voided
+        if not include_voided:
+            base_ids = base_ids.filter(Payment.is_voided.is_(False))
+
+    if start_utc is not None:
+        base_ids = base_ids.filter(Payment.payment_date >= start_utc)
+    if end_utc_excl is not None:
+        base_ids = base_ids.filter(Payment.payment_date < end_utc_excl)
+
+    if effective_employee_id is not None:
+        base_ids = base_ids.filter(Payment.collector_id == effective_employee_id)
+
+    if province and province.strip():
+        prov = province.strip()
+        base_ids = base_ids.filter(or_(CL.province == prov, CP.province == prov))
+
+    q_str = (q or "").strip()
+    if q_str:
+        like = f"%{q_str}%"
+        conds = [
+            CL.first_name.ilike(like),
+            CL.last_name.ilike(like),
+            CL.phone.ilike(like),
+            CP.first_name.ilike(like),
+            CP.last_name.ilike(like),
+            CP.phone.ilike(like),
+        ]
+
+        # si es número, permitir buscar por ID pago exacto
+        if q_str.isdigit():
+            conds.append(Payment.id == int(q_str))
+
+        base_ids = base_ids.filter(or_(*conds))
+
+    total = base_ids.distinct().count()
+
+    ids_subq = (
+        base_ids.distinct()
+        .order_by(Payment.payment_date.desc(), Payment.id.desc())
+        .limit(limit)
+        .offset(offset)
+        .subquery()
+    )
+
+    rows = (
+        db.query(Payment)
+        .join(ids_subq, ids_subq.c.id == Payment.id)
+        .options(
+            joinedload(Payment.loan).joinedload(Loan.customer),
+            joinedload(Payment.purchase).joinedload(Purchase.customer),
+            joinedload(Payment.collector),
+        )
+        .order_by(Payment.payment_date.desc(), Payment.id.desc())
+        .all()
+    )
+
+    out: list[PaymentOut] = []
+    for p in rows:
+        loan = p.loan
+        purch = p.purchase
+        cust = (loan.customer if loan else None) or (purch.customer if purch else None)
+
+        out.append(
+            PaymentOut(
+                id=p.id,
+                amount=float(p.amount or 0),
+                payment_date=p.payment_date,
+                loan_id=p.loan_id,
+                purchase_id=p.purchase_id,
+                payment_type=p.payment_type,
+                description=p.description,
+                customer_id=cust.id if cust else None,
+                customer_name=(
+                    f"{(cust.last_name or '').strip()} {(cust.first_name or '').strip()}".strip()
+                    if cust
+                    else None
+                ),
+                customer_province=(cust.province if cust else None),
+                collector_id=p.collector_id,
+                collector_name=p.collector.name if p.collector else None,
+                # ✅ recomendado: exponerlo para UI (chips/estados)
+                is_voided=bool(p.is_voided),
+            )
+        )
+
+    return {"data": out, "total": int(total or 0)}
+
+
 
 def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employee):
     """
@@ -315,6 +494,8 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
     company_name = None
     company_cuit = None
     reference = "Pago"
+    customer_province = None
+
 
     if payment.loan_id:
         loan = db.query(Loan).get(payment.loan_id)
@@ -324,6 +505,7 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
             customer_name = _full_name(loan.customer)
             customer_doc = getattr(loan.customer, "dni", None)
             customer_phone = getattr(loan.customer, "phone", None)
+            customer_province = getattr(loan.customer, "province", None)
         if loan.company:
             company_name = loan.company.name
             company_cuit = getattr(loan.company, "cuit", None)
@@ -336,6 +518,7 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
             customer_name = _full_name(purchase.customer)
             customer_doc = getattr(purchase.customer, "dni", None)
             customer_phone = getattr(purchase.customer, "phone", None)
+            customer_province = getattr(loan.customer, "province", None)
         if purchase.company:
             company_name = purchase.company.name
             company_cuit = getattr(purchase.company, "cuit", None)
@@ -356,7 +539,144 @@ def _ensure_scope_and_get_context(db: Session, payment: Payment, current: Employ
         "company_cuit": company_cuit,
         "collector_name": collector_name,
         "reference": reference,
+        "customer_province": customer_province,
     }
+
+
+
+
+@router.post("/bulk-apply", response_model=BulkPaymentApplyOut)
+def bulk_apply_payments(
+    payload: BulkPaymentApplyIn,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    """
+    Aplica pagos en forma masiva sobre préstamos, imputando siempre a las cuotas más viejas
+    (menor Installment.number) vía recompute_ledger_for_loan.
+
+    - Valida scope por empresa.
+    - Si all_or_nothing=True, ante cualquier error no persiste nada.
+    - Si all_or_nothing=False, aplica los válidos y reporta los fallidos.
+    """
+    items = payload.items or []
+    if not items:
+        raise HTTPException(status_code=400, detail="items vacío")
+
+    # Pre-cargar loans únicos y validar scope
+    loan_ids = sorted({it.loan_id for it in items})
+    loans = (
+        db.query(Loan)
+        .filter(Loan.id.in_(loan_ids), Loan.company_id == current.company_id)
+        .all()
+    )
+    loans_by_id = {l.id: l for l in loans}
+
+    results = []
+    ok = 0
+    failed = 0
+
+    # Control de saldo por loan dentro del mismo batch
+    remaining_due = {lid: float(loans_by_id[lid].total_due or 0.0) for lid in loans_by_id.keys()}
+
+    # Validación previa
+    validation_errors = []
+    for idx, it in enumerate(items):
+        if it.loan_id not in loans_by_id:
+            validation_errors.append((idx, it.loan_id, "Préstamo inexistente o fuera de la empresa"))
+            continue
+        if it.amount is None or it.amount <= 0:
+            validation_errors.append((idx, it.loan_id, "El monto debe ser > 0"))
+            continue
+        due = remaining_due.get(it.loan_id, 0.0)
+        if it.amount > due + 1e-6:
+            validation_errors.append((idx, it.loan_id, f"El monto ({it.amount}) supera el saldo pendiente ({due})"))
+            continue
+        # Collector opcional: validar que pertenezca a la empresa
+        if it.collector_id is not None:
+            col = db.query(Employee).filter(Employee.id == it.collector_id).first()
+            if not col or col.company_id != current.company_id:
+                validation_errors.append((idx, it.loan_id, "collector_id inválido o fuera de la empresa"))
+                continue
+        remaining_due[it.loan_id] = max(due - float(it.amount), 0.0)
+
+    if validation_errors and payload.all_or_nothing:
+        # No persistimos nada
+        return BulkPaymentApplyOut(
+            ok=0,
+            failed=len(items),
+            results=[
+                BulkPaymentItemOut(index=i, loan_id=lid, applied=False, error=err)
+                for (i, lid, err) in validation_errors
+            ],
+        )
+
+    # Reset remaining_due para aplicar (lo recalculamos para la fase de escritura)
+    remaining_due = {lid: float(loans_by_id[lid].total_due or 0.0) for lid in loans_by_id.keys()}
+
+    affected_loans = set()
+    payments_created = {}
+
+    for idx, it in enumerate(items):
+        # Si estaba en errores de validación (modo parcial), lo marcamos y seguimos
+        ve = next((e for e in validation_errors if e[0] == idx), None)
+        if ve:
+            failed += 1
+            results.append(BulkPaymentItemOut(index=idx, loan_id=it.loan_id, applied=False, error=ve[2]))
+            continue
+
+        loan = loans_by_id[it.loan_id]
+
+        # Determinar collector: preferimos el provisto, si no el del préstamo; si no, el usuario logueado
+        collector_id = it.collector_id or getattr(loan, "employee_id", None) or current.id
+
+        pdt = it.payment_date
+        if pdt is None:
+            payment_dt_utc = datetime.now(timezone.utc)
+        else:
+            if pdt.tzinfo is None:
+                pdt = pdt.replace(tzinfo=timezone.utc)
+            payment_dt_utc = pdt.astimezone(timezone.utc)
+
+        try:
+            pay = Payment(
+                amount=float(it.amount),
+                loan_id=loan.id,
+                purchase_id=None,
+                payment_date=payment_dt_utc,
+                payment_type=it.payment_type,
+                description=it.description,
+                collector_id=collector_id,
+            )
+            db.add(pay)
+            db.flush()  # obtener pay.id
+            payments_created[idx] = pay.id
+            affected_loans.add(loan.id)
+            ok += 1
+            results.append(BulkPaymentItemOut(index=idx, loan_id=loan.id, payment_id=pay.id, applied=True, error=None))
+        except SQLAlchemyError as e:
+            db.rollback()
+            failed += 1
+            results.append(BulkPaymentItemOut(index=idx, loan_id=it.loan_id, applied=False, error=str(e)))
+
+    # Recomputar ledger por préstamo afectado (imputa a cuotas más viejas)
+    for loan_id in affected_loans:
+        try:
+            recompute_ledger_for_loan(db, loan_id)
+            update_status_if_fully_paid(db, loan_id=loan_id, purchase_id=None)
+        except Exception as e:
+            if payload.all_or_nothing:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"Error recomputando ledger para loan {loan_id}: {e}")
+            # modo parcial: registramos fallo, pero no revertimos lo ya aplicado
+            # (mejorable: flaggear resultados por loan)
+            continue
+
+    db.commit()
+
+    return BulkPaymentApplyOut(ok=ok, failed=failed, results=results)
+
+
 
 
 
@@ -423,6 +743,7 @@ def get_payment_detail(
         customer_name=ctx["customer_name"],
         customer_doc=ctx["customer_doc"],
         customer_phone=ctx["customer_phone"],
+        customer_province=ctx["customer_province"],
         company_name=ctx["company_name"],
         company_cuit=ctx["company_cuit"],
         collector_name=ctx["collector_name"],
@@ -433,6 +754,10 @@ def get_payment_detail(
         installments_paid=installments_paid,
         installments_overdue=installments_overdue,
         installments_pending=installments_pending,
+        is_voided=payment.is_voided,
+        voided_at=payment.voided_at,
+        void_reason=payment.void_reason,
+
     )
 
 
