@@ -91,7 +91,10 @@ app = FastAPI(lifespan=lifespan)
 #     allow_credentials = False
 
 
-ALLOWED_ORIGINS = ["*"]  # 🔥 mientras desarrollás, todo permitido
+ALLOWED_ORIGINS = [
+    "https://cuentaclara-adminportal.up.railway.app",
+    "http://localhost:5173"
+]
 allow_credentials = False
 
 app.add_middleware(
