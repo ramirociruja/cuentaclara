@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 
@@ -22,8 +22,13 @@ class EmployeeOut(EmployeeBase):
     id: int
     created_at: datetime
 
+    # ✅ nuevos
+    is_active: bool
+    disabled_at: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
+
     class Config:
-        orm_mode = True
+        from_attributes = True  # ✅ pydantic v2 (reemplaza orm_mode)
 
 class EmployeeCreateIn(BaseModel):
     name: str
@@ -44,3 +49,12 @@ class EmployeeUpdateIn(BaseModel):
 
 class EmployeePasswordResetIn(BaseModel):
     new_password: str
+
+
+
+class EmployeePasswordUpdate(BaseModel):
+    password: str = Field(..., min_length=6, max_length=128)
+
+class EmployeeMyPasswordUpdate(BaseModel):
+    current_password: str = Field(..., min_length=6, max_length=128)
+    new_password: str = Field(..., min_length=6, max_length=128)

@@ -86,7 +86,7 @@ export function CustomersList() {
       dateLabel="Alta"
       fromKey="created_from"
       toKey="created_to"
-      defaultPreset="this_week"
+      defaultPreset="all"
       employeeKey="employee_id"
       qKey="q"
       qLabel="Buscar"

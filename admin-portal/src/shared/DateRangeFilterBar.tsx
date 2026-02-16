@@ -47,7 +47,7 @@ function fmtHuman(isoYmd: string) {
   return `${d}/${m}/${y}`;
 }
 
-type Preset = "this_week" | "last_week" | "this_month" | "last_month" | "custom";
+type Preset = "all" | "this_week" | "last_week" | "this_month" | "last_month" | "custom";
 
 type Props = {
   label?: string;
@@ -65,7 +65,7 @@ export function DateRangeFilterBar({
   label = "Fecha",
   fromKey,
   toKey,
-  defaultPreset = "this_week",
+  defaultPreset = "all",
   compact = false,
   showLabel = true,
   alignSummaryRight = false,
@@ -87,6 +87,21 @@ export function DateRangeFilterBar({
   const applyRange = React.useCallback(
     (p: Preset) => {
       const today = new Date();
+
+      if (p === "all") {
+        setPreset(p);
+        setFrom("");
+        setTo("");
+
+        const next = { ...filterValues };
+        next.__date_preset = p;
+        delete next[fromKey];
+        delete next[toKey];
+
+        setFilters(next, null, false);
+        return;
+      }
+
 
       let nextFrom = from;
       let nextTo = to;
@@ -134,7 +149,25 @@ export function DateRangeFilterBar({
     const hasTo = typeof filterValues?.[toKey] === "string" && filterValues?.[toKey];
 
     if (!hasFrom || !hasTo) {
-      applyRange(initialPreset);
+      // ✅ si el preset inicial es "all", dejamos sin filtro de fechas
+      if (initialPreset === "all") {
+        setPreset("all");
+        setFrom("");
+        setTo("");
+        setFilters(
+          (() => {
+            const next = { ...filterValues };
+            next.__date_preset = "all";
+            delete next[fromKey];
+            delete next[toKey];
+            return next;
+          })(),
+          null,
+          false
+        );
+      } else {
+        applyRange(initialPreset);
+      }
     } else {
       setFrom(filterValues?.[fromKey] as string);
       setTo(filterValues?.[toKey] as string);
@@ -192,6 +225,7 @@ export function DateRangeFilterBar({
           minWidth: 0,
         }}
       >
+        <MenuItem value="all">Todos</MenuItem>
         <MenuItem value="this_week">Semana actual</MenuItem>
         <MenuItem value="last_week">Semana anterior</MenuItem>
         <MenuItem value="this_month">Mes actual</MenuItem>

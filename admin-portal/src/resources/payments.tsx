@@ -209,7 +209,7 @@ export function PaymentsList() {
         dateLabel="Fecha"
         fromKey="date_from"
         toKey="date_to"
-        defaultPreset="this_week"
+        defaultPreset="all"
         // ✅ mismos filtros “core” que en otras pantallas
         employeeKey="employee_id"
         qKey="q"

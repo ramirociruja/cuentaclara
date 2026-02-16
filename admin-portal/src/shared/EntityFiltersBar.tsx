@@ -23,7 +23,8 @@ type Props = {
   dateLabel: string;
   fromKey: string;
   toKey: string;
-  defaultPreset?: "this_week" | "last_week" | "this_month" | "last_month" | "custom";
+  defaultPreset?: "all" | "this_week" | "last_week" | "this_month" | "last_month" | "custom";
+
 
   // Cobrador
   employeeKey?: string; // default: "employee_id"
@@ -50,7 +51,7 @@ export function EntityFiltersBar({
   dateLabel,
   fromKey,
   toKey,
-  defaultPreset = "this_week",
+  defaultPreset = "all",
 
   employeeKey = "employee_id",
   employeeResource = "employees",

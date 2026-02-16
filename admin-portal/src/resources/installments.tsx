@@ -111,7 +111,7 @@ export function InstallmentsList() {
         dateLabel="Vencimiento"
         fromKey="due_from"
         toKey="due_to"
-        defaultPreset="this_week"
+        defaultPreset="all"
         // ✅ filtros comunes
         employeeKey="employee_id"
         qKey="q"

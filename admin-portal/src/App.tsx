@@ -11,7 +11,7 @@ import { CustomersList, CustomersCreate, CustomersEdit, CustomersShow } from "./
 import { LoanList, LoanCreate, LoanEdit, LoanShow } from "./resources/loans";
 import { PaymentsList, PaymentsShow, PaymentsEdit, LoanPaymentsCreate } from "./resources/payments";
 import { InstallmentShow, InstallmentsList } from "./resources/installments";
-import { EmployeesList } from "./resources/employees";
+import { EmployeesEdit, EmployeesList, EmployeesShow } from "./resources/employees";
 import { i18nProvider } from "./i18nProvider";
 import { ServiceGate } from "./app/ServiceGate";
 import { ServiceSuspendedPage } from "./pages/ServiceSuspendedPage";
@@ -75,7 +75,13 @@ export default function App() {
         list={InstallmentsList}
         show={InstallmentShow}
       />
-      <Resource name="employees" list={EmployeesList} />
+      <Resource
+        name="employees"
+        list={EmployeesList}
+        edit={EmployeesEdit}
+        show={EmployeesShow}
+      />
+
 
       <Resource name="collectable" list={CollectableList} />
       <Resource name="loan_payments" create={LoanPaymentsCreate} />

@@ -1,17 +1,21 @@
+from locale import currency
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from app.database.db import get_db
+from app.schemas import employee
 from app.utils.auth import hash_password, get_current_user
 from app import models, schemas
 from app.utils import auth
-from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeOut
+from app.schemas.employee import EmployeeCreate, EmployeeMyPasswordUpdate, EmployeePasswordUpdate, EmployeeUpdate, EmployeeOut
 from app.models.models import Installment, Loan, Employee
-from datetime import date
+from datetime import date, datetime, timezone
 from app.schemas.schemas import LoginRequest
 from app.utils.license import ensure_company_active
+from app.utils.auth import hash_password, verify_password  # verify_password si existe
+
 
 
 router = APIRouter(
@@ -19,6 +23,80 @@ router = APIRouter(
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+
+def ensure_admin(current: Employee):
+    if (current.role or "").lower() not in ("admin", "manager"):  # ajustá roles
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+@router.put("/{employee_id}/password", status_code=204)
+def admin_set_employee_password(
+    employee_id: int,
+    payload: EmployeePasswordUpdate,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    ensure_admin(current)
+
+    employee = db.get(Employee, employee_id)
+    if not employee or employee.company_id != current.company_id:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+
+    employee.password = hash_password(payload.password)
+
+    # opcional recomendado: invalidar sesiones activas
+    employee.token_version = (employee.token_version or 0) + 1
+
+    db.commit()
+    return
+
+@router.put("/me/password", status_code=204)
+def change_my_password(
+    payload: EmployeeMyPasswordUpdate,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    # si no tenés verify_password, lo agregamos en utils/auth
+    if not verify_password(payload.current_password, current.password):
+        raise HTTPException(status_code=400, detail="Contraseña actual incorrecta")
+
+    current.password = hash_password(payload.new_password)
+    current.token_version = (current.token_version or 0) + 1
+    db.commit()
+    return
+
+
+@router.post("/{employee_id}/disable", status_code=204)
+def disable_employee(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    ensure_admin(current)
+    emp = db.get(Employee, employee_id)
+    if not emp or emp.company_id != current.company_id:
+        raise HTTPException(404, "Empleado no encontrado")
+    emp.is_active = False
+    emp.disabled_at = datetime.now(timezone.utc)
+    emp.token_version = (emp.token_version or 0) + 1
+    db.commit()
+    return
+
+@router.post("/{employee_id}/enable", status_code=204)
+def enable_employee(
+    employee_id: int,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(get_current_user),
+):
+    ensure_admin(current)
+    emp = db.get(Employee, employee_id)
+    if not emp or emp.company_id != current.company_id:
+        raise HTTPException(404, "Empleado no encontrado")
+    emp.is_active = True
+    emp.disabled_at = None
+    db.commit()
+    return
+
 
 
 @router.post("/", response_model=EmployeeOut)

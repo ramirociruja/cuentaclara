@@ -96,6 +96,13 @@ def get_current_user(
     if tv_in_token != current_tv:
         # access token viejo/invalidado
         raise cred_exc
+    
+    # 🔒 bloquear empleados deshabilitados
+    if getattr(employee, "is_active", True) is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario deshabilitado",
+        )
 
     return employee
 
@@ -122,10 +129,19 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     if not employee:
         raise HTTPException(status_code=401, detail="Email o contraseña incorrecta")
+    
+    if getattr(employee, "is_active", True) is False:
+        raise HTTPException(status_code=403, detail="Usuario deshabilitado")
+
 
     stored_hash = employee.password
     if not verify_password(request.password, stored_hash):
         raise HTTPException(status_code=401, detail="Email o contraseña incorrecta")
+
+    employee.last_login_at = datetime.now(timezone.utc)
+    db.add(employee)
+    db.commit()
+    db.refresh(employee)
 
     access = create_access_token(employee)
     refresh = create_refresh_token(employee)
@@ -164,10 +180,16 @@ def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
     employee = db.query(models.Employee).filter(models.Employee.id == employee_id).first()
     if not employee:
         raise HTTPException(status_code=401, detail="Usuario no encontrado")
+    
+    if getattr(employee, "is_active", True) is False:
+        raise HTTPException(status_code=403, detail="Usuario deshabilitado")
+
 
     current_version = int(getattr(employee, "token_version", 0))
     if token_version_in_token != current_version:
         raise HTTPException(status_code=401, detail="Refresh token caducado o rotado")
+
+    employee.last_login_at = datetime.now(timezone.utc)
 
     # Rotación: invalida refresh previos incrementando la versión
     employee.token_version = current_version + 1

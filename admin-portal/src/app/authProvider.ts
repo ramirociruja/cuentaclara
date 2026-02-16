@@ -49,6 +49,7 @@ export const authProvider: AuthProvider = {
     localStorage.removeItem("company_id");
     localStorage.removeItem("name");
     localStorage.removeItem("email");
+    window.location.hash = "#/login";
     return Promise.resolve();
   },
 

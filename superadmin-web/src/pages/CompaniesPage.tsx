@@ -1,5 +1,5 @@
 // src/pages/CompaniesPage.tsx
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
@@ -46,6 +46,39 @@ export default function CompaniesPage() {
     }
   }
 
+  // ✅ NUEVO: extensión personalizada
+  async function handleExtendLicenseCustom(id: number) {
+    const raw = window.prompt(
+      "¿Cuántos días querés extender la licencia? (1 a 90)",
+      "3"
+    );
+    if (raw === null) return; // canceló
+
+    const days = Number(raw);
+
+    if (!Number.isFinite(days) || !Number.isInteger(days)) {
+      alert("Ingresá un número entero de días (ej: 3).");
+      return;
+    }
+    if (days < 1 || days > 90) {
+      alert("El número de días debe estar entre 1 y 90.");
+      return;
+    }
+
+    const confirmExtend = window.confirm(
+      `¿Extender ${days} día(s) la licencia de esta empresa?`
+    );
+    if (!confirmExtend) return;
+
+    try {
+      await api.post(`/superadmin/companies/${id}/extend-license`, { days });
+      fetchCompanies();
+    } catch (err: any) {
+      console.error(err);
+      alert("No se pudo extender la licencia.");
+    }
+  }
+
   async function handleSuspend(id: number) {
     const reason = window.prompt(
       "Motivo de la suspensión (opcional):",
@@ -60,9 +93,7 @@ export default function CompaniesPage() {
       fetchCompanies();
     } catch (err: any) {
       console.error(err);
-      alert(
-        err?.response?.data?.detail || "No se pudo suspender la empresa."
-      );
+      alert(err?.response?.data?.detail || "No se pudo suspender la empresa.");
     }
   }
 
@@ -77,9 +108,7 @@ export default function CompaniesPage() {
       fetchCompanies();
     } catch (err: any) {
       console.error(err);
-      alert(
-        err?.response?.data?.detail || "No se pudo reactivar la empresa."
-      );
+      alert(err?.response?.data?.detail || "No se pudo reactivar la empresa.");
     }
   }
 
@@ -124,9 +153,7 @@ export default function CompaniesPage() {
       </header>
 
       {loading && <p>Cargando empresas...</p>}
-      {error && (
-        <p style={{ color: "#b91c1c", marginBottom: "1rem" }}>{error}</p>
-      )}
+      {error && <p style={{ color: "#b91c1c", marginBottom: "1rem" }}>{error}</p>}
 
       {!loading && !error && (
         <table
@@ -163,9 +190,7 @@ export default function CompaniesPage() {
                   </td>
                   <td style={tdStyle}>
                     {c.license_expires_at
-                      ? new Date(c.license_expires_at).toLocaleDateString(
-                          "es-AR"
-                        )
+                      ? new Date(c.license_expires_at).toLocaleDateString("es-AR")
                       : "-"}
                   </td>
                   <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
@@ -198,8 +223,27 @@ export default function CompaniesPage() {
                         fontSize: "0.8rem",
                         marginRight: "0.4rem",
                       }}
+                      title="Extiende 30 días"
                     >
                       +30 días
+                    </button>
+
+                    {/* ✅ NUEVO botón */}
+                    <button
+                      onClick={() => handleExtendLicenseCustom(c.id)}
+                      style={{
+                        padding: "0.3rem 0.7rem",
+                        borderRadius: "0.5rem",
+                        border: "1px solid #16a34a",
+                        background: "white",
+                        color: "#166534",
+                        cursor: "pointer",
+                        fontSize: "0.8rem",
+                        marginRight: "0.4rem",
+                      }}
+                      title="Extiende una cantidad de días personalizada"
+                    >
+                      +X días
                     </button>
 
                     {isActive && (

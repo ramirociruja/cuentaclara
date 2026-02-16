@@ -73,6 +73,11 @@ class Employee(Base):
         nullable=False,
         index=True,
     )
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true", index=True)
+    disabled_at = Column(DateTime(timezone=True), nullable=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+
 
     company_id = Column(Integer, ForeignKey('companies.id'))
     token_version = Column(Integer, nullable=False, default=0)

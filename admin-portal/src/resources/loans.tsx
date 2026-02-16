@@ -67,7 +67,7 @@ export function LoanList() {
         // ✅ backend: date_from/date_to (YYYY-MM-DD)
         fromKey="date_from"
         toKey="date_to"
-        defaultPreset="this_week"
+        defaultPreset="all"
         employeeKey="employee_id"
         qKey="q"
         qLabel="Buscar"
