@@ -246,6 +246,7 @@ def customer_dashboard(
         inst_base
         .filter(Installment.is_paid.is_(False))
         .filter(due_local_day < today_local)
+        .filter(Installment.status.notin_(["cancelled", "refinanced"]))
     )
 
     overdue_installments_count = overdue_q.with_entities(func.count(Installment.id)).scalar() or 0
@@ -259,6 +260,7 @@ def customer_dashboard(
     next_row = (
         inst_base
         .filter(Installment.is_paid.is_(False))
+        .filter(Installment.status.notin_(["cancelled", "refinanced"]))
         .filter(inst_balance > 0.0)
         .filter(due_local_day >= today_local)
         .order_by(Installment.due_date.asc(), Installment.number.asc(), Installment.id.asc())
@@ -467,6 +469,7 @@ def customer_loans(
         inst_base
         .filter(Installment.is_paid.is_(False))
         .filter(due_local_day < today_local)
+        .filter(Installment.status.notin_(["cancelled", "refinanced"]))
         .with_entities(
             Installment.loan_id.label("loan_id"),
             func.count(Installment.id).label("overdue_count"),
@@ -489,6 +492,7 @@ def customer_loans(
         .filter(Installment.is_paid.is_(False))
         .filter(inst_balance > 0.0)
         .filter(due_local_day >= today_local)
+        .filter(Installment.status.notin_(["cancelled", "refinanced"]))
         .with_entities(
             Installment.loan_id.label("loan_id"),
             func.min(Installment.due_date).label("next_due_dt"),
