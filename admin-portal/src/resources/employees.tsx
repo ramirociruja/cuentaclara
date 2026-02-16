@@ -1,4 +1,3 @@
-import * as React from "react";
 import { List, Datagrid, TextField, NumberField, DateField } from "react-admin";
 
 export function EmployeesList() {
