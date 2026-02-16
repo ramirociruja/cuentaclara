@@ -6,42 +6,64 @@ from app.models.models import Loan, Installment, Payment, PaymentAllocation
 
 EPS = 1e-6
 
-def _set_status_from_amounts(ins: Installment) -> None:
-    """
-    Setea ins.status e ins.is_paid en función de amount/paid_amount y due_date.
-    Invariantes:
-      - status='paid'  <=> is_paid=True
-      - status!='paid' <=> is_paid=False
-    """
+from zoneinfo import ZoneInfo
+
+AR_TZ = ZoneInfo("America/Argentina/Tucuman")  # o importá tu AR_TZ real
+
+EPS = 1e-6
+
+def _set_status_from_amounts(ins: Installment, zone: ZoneInfo = AR_TZ) -> None:
     amt = float(ins.amount or 0.0)
     paid = float(ins.paid_amount or 0.0)
-    fully_paid = paid >= amt - EPS
+    bal = max(amt - paid, 0.0)
+    fully_paid = bal <= EPS
 
+    # helpers
+    status = (getattr(ins, "status", None) or "").lower()
+
+    # calcular due_day local (si hay due_date)
+    due_dt = getattr(ins, "due_date", None)
+    due_local_day = None
+    if isinstance(due_dt, datetime):
+        try:
+            due_local_day = due_dt.astimezone(zone).date()
+        except Exception:
+            due_local_day = due_dt.date()
+    elif isinstance(due_dt, date):
+        due_local_day = due_dt
+
+    today_local = datetime.now(zone).date()
+
+    # --- status / is_paid ---
     if fully_paid:
         ins.status = "paid"
-        ins.is_paid = True          # ✅ FIX CLAVE
+        ins.is_paid = True
+        # ✅ si está paga, nunca overdue
+        if hasattr(ins, "is_overdue"):
+            ins.is_overdue = False
         return
 
-    # si no está paga
-    ins.is_paid = False             # ✅ FIX CLAVE
+    ins.is_paid = False
 
+    # si está cancelada/refinanciada, no overdue y status se mantiene (o lo seteo)
+    if status in {"cancelled", "canceled", "refinanced"}:
+        if hasattr(ins, "is_overdue"):
+            ins.is_overdue = False
+        return
+
+    # --- status derivado ---
     if paid > EPS:
         ins.status = "partial"
-        return
-
-    # ver si venció
-    due = getattr(ins, "due_date", None)
-    d: date | None = None
-    if isinstance(due, datetime):
-        d = due.date()
-    elif isinstance(due, date):
-        d = due
-    today = datetime.utcnow().date()
-
-    if d and d < today:
-        ins.status = "overdue"
     else:
-        ins.status = "pending"
+        if due_local_day and due_local_day < today_local:
+            ins.status = "overdue"
+        else:
+            ins.status = "pending"
+
+    # ✅ is_overdue derivado por saldo + vencimiento
+    if hasattr(ins, "is_overdue"):
+        ins.is_overdue = bool(due_local_day and due_local_day < today_local and bal > EPS)
+
 
 
 
@@ -119,7 +141,7 @@ def recompute_ledger_for_loan(db: Session, loan_id: int) -> None:
                 ))
                 remaining -= take
                 # refrescar status de la cuota
-                _set_status_from_amounts(ins)
+                _set_status_from_amounts(ins, zone=AR_TZ)
 
     # 6) (Opcional) actualizar algo en Loan si tenés campos agregados
     # Ej.: loan.status global, etc. Si ya lo resolvés con otra utilidad, omití esto.
