@@ -93,6 +93,10 @@ function withId(row: any, fallbackId?: any) {
   return { ...row, id };
 }
 
+function normalizeResource(resource: string) {
+  return String(resource ?? "").toLowerCase();
+}
+
 const SERVER_PAGINATED_RESOURCES = new Set<string>([
   // backend: /installments/collectable-per-loan -> {data,total} con limit/offset
   "collectable",
@@ -100,23 +104,27 @@ const SERVER_PAGINATED_RESOURCES = new Set<string>([
 ]);
 
 function listEndpoint(resource: string) {
-  if (resource === "collectable") return "/installments/collectable-per-loan";
-  
-  if (resource === "loans") return "/loans/all";
+  const normalized = normalizeResource(resource);
 
-  if (resource === "payments") return "/payments/all";
-
-  if (resource === "loans_effective") return "/loans/";
+  if (normalized === "collectable") return "/installments/collectable-per-loan";
   
-  return `/${resource}/`;
+  if (normalized === "loans") return "/loans/all";
+
+  if (normalized === "payments") return "/payments/all";
+
+  if (normalized === "loans_effective") return "/loans/";
+  
+  return `/${normalized}/`;
 }
 
 function createEndpoint(resource: string, params?: any) {
+  const normalized = normalizeResource(resource);
+
   // backend: /loans/createLoan/ (no estándar)
-  if (resource === "loans") return "/loans/createLoan/";
+  if (normalized === "loans") return "/loans/createLoan/";
 
    // NUEVO: registrar pago de cuota
-  if (resource === "installment_payments") {
+  if (normalized === "installment_payments") {
     const installmentId = params?.meta?.installment_id;
     if (!installmentId) {
       throw new Error("create(installment_payments) requiere meta.installment_id");
@@ -125,7 +133,7 @@ function createEndpoint(resource: string, params?: any) {
   }
 
     // NUEVO: registrar pago directo a un préstamo (crea Payment)
-  if (resource === "loan_payments") {
+  if (normalized === "loan_payments") {
     const loanId = params?.meta?.loan_id;
     if (!loanId) {
       throw new Error("create(loan_payments) requiere meta.loan_id");
@@ -133,26 +141,27 @@ function createEndpoint(resource: string, params?: any) {
     return `/loans/${loanId}/pay`;
   }
 
-
-  return `/${resource}`;
+  return `/${normalized}/`;
 }
 
 function updateEndpoint(resource: string, id: any) {
-  return `/${resource}/${id}`;
+  const normalized = normalizeResource(resource);
+  return `/${normalized}/${id}`;
 }
 
 export const dataProvider: DataProvider = {
   getList: async (resource, params) => {
-  const endpoint = listEndpoint(resource);
+  const normalized = normalizeResource(resource);
+  const endpoint = listEndpoint(normalized);
 
-  const serverPaginated = SERVER_PAGINATED_RESOURCES.has(resource);
+  const serverPaginated = SERVER_PAGINATED_RESOURCES.has(normalized);
 
   // ===============================
   // PAYMENTS: incluir voided por defecto (solo admin-portal)
   // ===============================
   let nextParams = params;
 
-  if (resource === "payments") {
+  if (normalized === "payments") {
     const currentFilter = (params?.filter ?? {}) as any;
     const filter = { ...currentFilter } as any;
 
@@ -205,7 +214,8 @@ export const dataProvider: DataProvider = {
 
 
   getOne: async (resource, params) => {
-    const resp = await httpClient(`/${resource}/${params.id}`);
+    const normalized = normalizeResource(resource);
+    const resp = await httpClient(`/${normalized}/${params.id}`);
     const row = resp.json as any;
     return { data: withId(row, params.id) };
   },
@@ -241,7 +251,9 @@ export const dataProvider: DataProvider = {
    * - Otros: no implementamos delete todavía.
    */
   delete: async (resource, params) => {
-    if (resource === "payments") {
+    const normalized = normalizeResource(resource);
+
+    if (normalized === "payments") {
       const reason = (params as any)?.meta?.reason ?? null;
 
       await httpClient(`/payments/void/${params.id}`, {
@@ -253,7 +265,7 @@ export const dataProvider: DataProvider = {
       return { data: withId(params.previousData ?? { id: params.id }) };
     }
 
-    if (resource === "employees") {
+    if (normalized === "employees") {
       await httpClient(`/employees/${params.id}`, { method: "DELETE" });
       return { data: withId(params.previousData ?? { id: params.id }) };
     }
@@ -266,9 +278,10 @@ export const dataProvider: DataProvider = {
    * Implementación simple: múltiples getOne.
    */
   getMany: async (resource, params) => {
+    const normalized = normalizeResource(resource);
     const rows = await Promise.all(
       params.ids.map((id: any) =>
-        httpClient(`/${resource}/${id}`).then((r) => withId(r.json as any, id))
+        httpClient(`/${normalized}/${id}`).then((r) => withId(r.json as any, id))
       )
     );
     return { data: rows };
