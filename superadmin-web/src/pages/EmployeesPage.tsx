@@ -1,5 +1,4 @@
-// src/pages/EmployeesPage.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
@@ -31,16 +30,21 @@ export default function EmployeesPage() {
 
   const [filterCompanyId, setFilterCompanyId] = useState<number | "all">("all");
   const [filterRole, setFilterRole] = useState<string>("all");
+  const [search, setSearch] = useState("");
 
   const [sortField, setSortField] = useState<SortField>("id");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
-  // -----------------------------------------------------------
-  // Helpers
-  // -----------------------------------------------------------
+  const companyNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    companies.forEach((company) => {
+      map.set(company.id, company.name);
+    });
+    return map;
+  }, [companies]);
+
   function getCompanyName(id: number) {
-    const c = companies.find((x) => x.id === id);
-    return c ? c.name : `#${id}`;
+    return companyNameById.get(id) || `#${id}`;
   }
 
   function toggleSort(field: SortField) {
@@ -57,49 +61,52 @@ export default function EmployeesPage() {
     return sortDirection === "asc" ? "▲" : "▼";
   }
 
-  // -----------------------------------------------------------
-  // Fetch inicial (una sola vez)
-  // -----------------------------------------------------------
-  useEffect(() => {
-    async function load() {
-      try {
-        setLoading(true);
-        const [empResp, compResp] = await Promise.all([
-          api.get<Employee[]>("/superadmin/employees"),
-          api.get<Company[]>("/superadmin/companies"),
-        ]);
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError(null);
+      const [empResp, compResp] = await Promise.all([
+        api.get<Employee[]>("/superadmin/employees"),
+        api.get<Company[]>("/superadmin/companies"),
+      ]);
 
-        setEmployees(empResp.data);
-        setCompanies(compResp.data);
-        setError(null);
-      } catch (err) {
-        console.error(err);
-        setError("No se pudo cargar empleados o empresas.");
-      } finally {
-        setLoading(false);
-      }
+      setEmployees(empResp.data);
+      setCompanies(compResp.data);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo cargar empleados o empresas.");
+    } finally {
+      setLoading(false);
     }
+  }
 
-    load();
+  useEffect(() => {
+    loadData();
   }, []);
 
-  // -----------------------------------------------------------
-  // Filtrado + ordenamiento SOLO EN EL FRONT
-  // -----------------------------------------------------------
   const filteredAndSorted = useMemo(() => {
     let list = [...employees];
 
-    // 1) Filtrar empresa
     if (filterCompanyId !== "all") {
-      list = list.filter((e) => e.company_id === filterCompanyId);
+      list = list.filter((employee) => employee.company_id === filterCompanyId);
     }
 
-    // 2) Filtrar rol
     if (filterRole !== "all") {
-      list = list.filter((e) => e.role === filterRole);
+      list = list.filter((employee) => employee.role === filterRole);
     }
 
-    // 3) Ordenar
+    const term = search.trim().toLowerCase();
+    if (term) {
+      list = list.filter((employee) => {
+        return (
+          employee.name.toLowerCase().includes(term) ||
+          employee.email.toLowerCase().includes(term) ||
+          String(employee.id).includes(term) ||
+          getCompanyName(employee.company_id).toLowerCase().includes(term)
+        );
+      });
+    }
+
     list.sort((a, b) => {
       let aVal: string | number = "";
       let bVal: string | number = "";
@@ -133,77 +140,75 @@ export default function EmployeesPage() {
     });
 
     return list;
-  }, [employees, filterCompanyId, filterRole, sortField, sortDirection, companies]);
+  }, [employees, filterCompanyId, filterRole, sortField, sortDirection, search, companyNameById]);
 
-  function handleNewEmployee() {
-    navigate("/employees/new");
-  }
-
-  // -----------------------------------------------------------
-  // UI
-  // -----------------------------------------------------------
   return (
-    <div style={{ padding: "0.5rem" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       <header
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginBottom: "1.5rem",
+          marginBottom: "0.5rem",
+          flexWrap: "wrap",
+          gap: "0.75rem",
         }}
       >
-        <h1 style={{ fontSize: "1.5rem", fontWeight: 600 }}>Empleados</h1>
-        <button
-          onClick={handleNewEmployee}
-          style={{
-            padding: "0.45rem 0.9rem",
-            borderRadius: "9999px",
-            border: "none",
-            background: "#2563eb",
-            color: "white",
-            fontSize: "0.9rem",
-            fontWeight: 500,
-            cursor: "pointer",
-          }}
-        >
-          Nuevo empleado
-        </button>
+        <h2 style={{ margin: 0, fontSize: "1.45rem", fontWeight: 700 }}>Empleados</h2>
+
+        <div style={{ display: "flex", gap: "0.6rem" }}>
+          <button onClick={loadData} style={secondaryButton}>Recargar</button>
+          <button onClick={() => navigate("/employees/new")} style={primaryButton}>
+            Nuevo empleado
+          </button>
+        </div>
       </header>
 
-      {/* FILTROS */}
-      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
-        <div>
-          <label style={labelStyle}>Empresa</label>
-          <select
-            value={filterCompanyId}
-            onChange={(e) =>
-              setFilterCompanyId(
-                e.target.value === "all" ? "all" : Number(e.target.value)
-              )
-            }
-            style={selectStyle}
-          >
-            <option value="all">Todas</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div style={panelStyle}>
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <div>
+            <label style={labelStyle}>Empresa</label>
+            <select
+              value={filterCompanyId}
+              onChange={(event) =>
+                setFilterCompanyId(
+                  event.target.value === "all" ? "all" : Number(event.target.value),
+                )
+              }
+              style={selectStyle}
+            >
+              <option value="all">Todas</option>
+              {companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div>
-          <label style={labelStyle}>Rol</label>
-          <select
-            value={filterRole}
-            onChange={(e) => setFilterRole(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="all">Todos</option>
-            <option value="admin">Admin</option>
-            <option value="collector">Cobrador</option>
-            <option value="superadmin">SuperAdmin</option>
-          </select>
+          <div>
+            <label style={labelStyle}>Rol</label>
+            <select
+              value={filterRole}
+              onChange={(event) => setFilterRole(event.target.value)}
+              style={selectStyle}
+            >
+              <option value="all">Todos</option>
+              <option value="admin">Admin</option>
+              <option value="collector">Cobrador</option>
+              <option value="superadmin">SuperAdmin</option>
+            </select>
+          </div>
+
+          <div style={{ minWidth: "220px", flex: 1 }}>
+            <label style={labelStyle}>Buscar</label>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              style={selectStyle}
+              placeholder="Nombre, email, empresa o ID"
+            />
+          </div>
         </div>
       </div>
 
@@ -211,64 +216,57 @@ export default function EmployeesPage() {
       {error && <p style={{ color: "#b91c1c" }}>{error}</p>}
 
       {!loading && !error && (
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            background: "white",
-            borderRadius: "0.75rem",
-            overflow: "hidden",
-            boxShadow: "0 10px 25px rgba(0, 0, 0, 0.05)",
-          }}
-        >
-          <thead>
-            <tr style={{ background: "#f9fafb" }}>
-              <SortableTh label="ID" icon={sortIcon("id")} onClick={() => toggleSort("id")} />
-              <SortableTh label="Nombre" icon={sortIcon("name")} onClick={() => toggleSort("name")} />
-              <SortableTh label="Email" icon={sortIcon("email")} onClick={() => toggleSort("email")} />
-              <SortableTh label="Rol" icon={sortIcon("role")} onClick={() => toggleSort("role")} />
-              <SortableTh label="Empresa" icon={sortIcon("company")} onClick={() => toggleSort("company")} />
-              <th style={thStyle}>Teléfono</th>
-              <th style={thStyle}>Acciones</th> {/* 👈 NUEVA */}
-            </tr>
-          </thead>
-
-          <tbody>
-            {filteredAndSorted.map((e) => (
-              <tr key={e.id}>
-                <td style={tdStyle}>{e.id}</td>
-                <td style={tdStyle}>{e.name}</td>
-                <td style={tdStyle}>{e.email}</td>
-                <td style={tdStyle}>{e.role}</td>
-                <td style={tdStyle}>{getCompanyName(e.company_id)}</td>
-                <td style={tdStyle}>{e.phone || "-"}</td>
-                <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-                  <button
-                    onClick={() => navigate(`/employees/${e.id}`)}
-                    style={{
-                      padding: "0.3rem 0.7rem",
-                      borderRadius: "0.5rem",
-                      border: "1px solid #d1d5db",
-                      background: "white",
-                      cursor: "pointer",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    Ver / editar
-                  </button>
-                </td>
+        <div style={{ ...panelStyle, overflowX: "auto" }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: "920px",
+              borderCollapse: "collapse",
+              background: "white",
+            }}
+          >
+            <thead>
+              <tr style={{ background: "#f9fafb" }}>
+                <SortableTh label="ID" icon={sortIcon("id")} onClick={() => toggleSort("id")} />
+                <SortableTh label="Nombre" icon={sortIcon("name")} onClick={() => toggleSort("name")} />
+                <SortableTh label="Email" icon={sortIcon("email")} onClick={() => toggleSort("email")} />
+                <SortableTh label="Rol" icon={sortIcon("role")} onClick={() => toggleSort("role")} />
+                <SortableTh label="Empresa" icon={sortIcon("company")} onClick={() => toggleSort("company")} />
+                <th style={thStyle}>Teléfono</th>
+                <th style={thStyle}>Acciones</th>
               </tr>
-            ))}
+            </thead>
 
-            {filteredAndSorted.length === 0 && (
-              <tr>
-                <td colSpan={6} style={tdStyle}>
-                  No hay empleados con los filtros seleccionados.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+            <tbody>
+              {filteredAndSorted.map((employee) => (
+                <tr key={employee.id}>
+                  <td style={tdStyle}>{employee.id}</td>
+                  <td style={tdStyle}>{employee.name}</td>
+                  <td style={tdStyle}>{employee.email}</td>
+                  <td style={tdStyle}>{employee.role}</td>
+                  <td style={tdStyle}>{getCompanyName(employee.company_id)}</td>
+                  <td style={tdStyle}>{employee.phone || "-"}</td>
+                  <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                    <button
+                      onClick={() => navigate(`/employees/${employee.id}`)}
+                      style={secondaryButton}
+                    >
+                      Ver / editar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+
+              {filteredAndSorted.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={tdStyle}>
+                    No hay empleados con los filtros seleccionados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -298,27 +296,56 @@ function SortableTh({
   );
 }
 
-const thStyle: React.CSSProperties = {
+const panelStyle: CSSProperties = {
+  background: "white",
+  borderRadius: "0.75rem",
+  boxShadow: "0 10px 25px rgba(0, 0, 0, 0.05)",
+  border: "1px solid #f3f4f6",
+  padding: "0.9rem",
+};
+
+const thStyle: CSSProperties = {
   padding: "0.75rem",
   textAlign: "left",
   borderBottom: "1px solid #e5e7eb",
   fontSize: "0.9rem",
 };
 
-const tdStyle: React.CSSProperties = {
+const tdStyle: CSSProperties = {
   padding: "0.6rem 0.75rem",
   borderBottom: "1px solid #f3f4f6",
   fontSize: "0.9rem",
 };
 
-const selectStyle: React.CSSProperties = {
-  padding: "0.4rem 0.6rem",
+const selectStyle: CSSProperties = {
+  width: "100%",
+  padding: "0.5rem 0.6rem",
   borderRadius: "0.5rem",
   border: "1px solid #d1d5db",
+  fontSize: "0.9rem",
 };
 
-const labelStyle: React.CSSProperties = {
+const labelStyle: CSSProperties = {
   display: "block",
   marginBottom: "0.25rem",
-  fontSize: "0.85rem",
+  fontSize: "0.82rem",
+  color: "#6b7280",
+};
+
+const primaryButton: CSSProperties = {
+  padding: "0.45rem 0.9rem",
+  borderRadius: "9999px",
+  border: "none",
+  background: "#2563eb",
+  color: "white",
+  fontSize: "0.9rem",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const secondaryButton: CSSProperties = {
+  ...primaryButton,
+  border: "1px solid #d1d5db",
+  background: "white",
+  color: "#111827",
 };

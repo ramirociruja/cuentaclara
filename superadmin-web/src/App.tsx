@@ -1,4 +1,3 @@
-// src/App.tsx
 import type { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
@@ -23,12 +22,25 @@ function PrivateRoute({ children }: { children: ReactElement }) {
   return children;
 }
 
+function PublicRoute({ children }: { children: ReactElement }) {
+  if (isAuthenticated()) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/login"
+        element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        }
+      />
 
-      {/* Rutas protegidas con layout */}
       <Route
         path="/"
         element={
@@ -40,7 +52,7 @@ export default function App() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="companies" element={<CompaniesPage />} />
-        <Route path="companies/new" element={<CreateCompanyPage />} /> {/* 👈 NUEVA */}
+        <Route path="companies/new" element={<CreateCompanyPage />} />
         <Route
           path="companies/:id/onboarding-import"
           element={<OnboardingImportPage />}
@@ -50,7 +62,6 @@ export default function App() {
         <Route path="employees/:id" element={<EmployeeDetailPage />} />
       </Route>
 
-      {/* Fallback */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
