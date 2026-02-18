@@ -334,7 +334,7 @@ export default function DashboardScreen() {
   );
 
 const issuedTotalOps = (issuedAgg.loans_count || 0) + (issuedAgg.purchases_count || 0);
-const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.total_due || 0) / issuedTotalOps : 0;
+const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issuedTotalOps : 0;
 
 
   return (
@@ -349,9 +349,9 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.total_due || 0) / issued
             justifyContent="space-between"
           >
             <Box>
-              <Typography variant="h6">Dashboard</Typography>
+              <Typography variant="h6">Resumen general</Typography>
               <Typography variant="body2" sx={{ opacity: 0.75 }}>
-                Enfoque semanal: cobranzas por cuotas del período + actividad (altas y cambios de estado).
+              Resumen financiero y operativo del período.
               </Typography>
             </Box>
 
@@ -569,14 +569,14 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.total_due || 0) / issued
                       <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
                         <Typography variant="body2">{r.loans_count || 0}</Typography>
                         <Typography variant="caption" sx={{ opacity: 0.75 }}>
-                          ({money(r.loans_total_due || 0)})
+                          ({money(r.loans_principal_amount || 0)})
                         </Typography>
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
                       {(() => {
                         const ops = (r.loans_count || 0) + (r.purchases_count || 0);
-                        const total = (r.loans_total_due || 0) + (r.purchases_total_due || 0);
+                        const total = (r.loans_principal_amount || 0) + (r.purchases_total_due || 0);
                         const avg = ops > 0 ? total / ops : 0;
 
                         return (
