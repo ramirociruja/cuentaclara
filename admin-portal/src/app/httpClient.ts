@@ -52,6 +52,16 @@ async function _refreshTokensOnce(): Promise<boolean> {
   }
 }
 
+
+function clearAuthStorage() {
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("refresh_token");
+  localStorage.removeItem("employee_id");
+  localStorage.removeItem("company_id");
+  localStorage.removeItem("name");
+  localStorage.removeItem("email");
+}
+
 function refreshTokens(): Promise<boolean> {
   // Si ya hay un refresh corriendo, esperamos ese mismo
   if (refreshInFlight) return refreshInFlight;
@@ -150,7 +160,8 @@ export const httpClient = async (
 ) => {
   const finalUrl = url.startsWith("http") ? url : `${API_URL}${url}`;
 
-  if (authBroken) {
+  const isAuthEndpoint = url === "/login" || url === "/refresh";
+  if (authBroken && !isAuthEndpoint) {
   throw new HttpError("No autorizado", 401, {});
   }
 
@@ -209,8 +220,7 @@ export const httpClient = async (
       const refreshed = await refreshTokens();
       if (!refreshed) {
         authBroken = true;
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("refresh_token");
+        clearAuthStorage();
         throw normalizeToHttpError(err);
       }
 

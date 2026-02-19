@@ -47,23 +47,15 @@ export const authProvider: AuthProvider = {
 
     checkAuth: async () => {
     const access = localStorage.getItem("access_token");
-    if (access) return Promise.resolve();
+    return access ? Promise.resolve() : Promise.reject();
+    },
 
-    // Si no hay access, intentamos recuperar con refresh (si existe)
-    const refresh = localStorage.getItem("refresh_token");
-    if (!refresh) return Promise.reject();
+  checkError: async (error) => {
+    const status = error?.status;
 
-    try {
-      // Esto dispara el flujo del httpClient:
-      // - 401 inicial
-      // - refresh (si corresponde)
-      // - reintento
-      await httpClient("/health", { method: "GET" }); 
-      // 🔁 IMPORTANTE: /health debe ser un endpoint protegido (requiere get_current_user)
-      // Si no tenés uno así, reemplazalo por cualquier endpoint protegido barato.
-      return Promise.resolve();
-    } catch {
-      // si no pudo revalidar sesión -> limpiar y mandar login
+    // 401 = no autenticado / token inválido -> forzar login
+    if (status === 401) {
+    // limpiar sesión
       localStorage.removeItem("access_token");
       localStorage.removeItem("refresh_token");
       localStorage.removeItem("employee_id");
@@ -72,13 +64,6 @@ export const authProvider: AuthProvider = {
       localStorage.removeItem("email");
       return Promise.reject();
     }
-  },
-
-  checkError: async (error) => {
-    const status = error?.status;
-
-    // 401 = no autenticado / token inválido -> forzar login
-    if (status === 401) return Promise.reject();
 
     // 403 = autenticado pero sin permisos -> NO desloguear
     return Promise.resolve();
