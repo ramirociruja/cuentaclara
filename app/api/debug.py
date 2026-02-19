@@ -2,7 +2,14 @@ import time
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from app.dependencies import get_db  # ajusta si tu import es distinto
+from app.database.db import SessionLocal  # ajusta si tu import es distinto
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 router = APIRouter(prefix="/debug", tags=["debug"])
 
