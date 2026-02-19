@@ -2,12 +2,17 @@ import { fetchUtils, HttpError } from "react-admin";
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
+let authBroken = false;
+
 function authHeader() {
   const token = localStorage.getItem("access_token");
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function refreshTokens(): Promise<boolean> {
+// ✅ Lock global: un solo refresh a la vez
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function _refreshTokensOnce(): Promise<boolean> {
   const refresh_token = localStorage.getItem("refresh_token");
   if (!refresh_token) return false;
 
@@ -40,10 +45,26 @@ async function refreshTokens(): Promise<boolean> {
     localStorage.setItem("name", data.name ?? "");
     localStorage.setItem("email", data.email ?? "");
 
+    authBroken = false;
     return true;
   } catch {
     return false;
   }
+}
+
+function refreshTokens(): Promise<boolean> {
+  // Si ya hay un refresh corriendo, esperamos ese mismo
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    try {
+      return await _refreshTokensOnce();
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
 }
 
 /**
@@ -129,6 +150,10 @@ export const httpClient = async (
 ) => {
   const finalUrl = url.startsWith("http") ? url : `${API_URL}${url}`;
 
+  if (authBroken) {
+  throw new HttpError("No autorizado", 401, {});
+  }
+
   const opts: fetchUtils.Options = { ...options };
   opts.headers = new Headers(opts.headers || { Accept: "application/json" });
 
@@ -145,6 +170,7 @@ export const httpClient = async (
     const res = await fetchUtils.fetchJson(finalUrl, opts);
 
     // ✅ si volvió a estar ok, limpiamos
+    authBroken = false;
     localStorage.removeItem("service_suspended");
     localStorage.removeItem("service_suspended_status");
     localStorage.removeItem("service_suspended_reason");
@@ -182,6 +208,7 @@ export const httpClient = async (
     if (status === 401) {
       const refreshed = await refreshTokens();
       if (!refreshed) {
+        authBroken = true;
         localStorage.removeItem("access_token");
         localStorage.removeItem("refresh_token");
         throw normalizeToHttpError(err);

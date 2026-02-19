@@ -5,7 +5,6 @@ function authHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-
 function headersToRecord(h?: HeadersInit): Record<string, string> {
   if (!h) return {};
   if (h instanceof Headers) return Object.fromEntries(h.entries());
@@ -13,7 +12,10 @@ function headersToRecord(h?: HeadersInit): Record<string, string> {
   return h;
 }
 
-async function refreshTokens(): Promise<boolean> {
+// ✅ Lock global
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function _refreshTokensOnce(): Promise<boolean> {
   const refresh_token = localStorage.getItem("refresh_token");
   if (!refresh_token) return false;
 
@@ -40,6 +42,20 @@ async function refreshTokens(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function refreshTokens(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    try {
+      return await _refreshTokensOnce();
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
 }
 
 export async function httpPdf(path: string, init?: RequestInit): Promise<Blob> {

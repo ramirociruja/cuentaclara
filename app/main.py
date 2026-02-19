@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes import admin_license, customers, employees, loans, installments, purchases, payments, companies, tasks, superadmin
 from app.routes.dashboard import router as dashboard_router
 from app.utils.auth import router as auth_router  # Router de autenticación
+from app.api.debug import router as debug_router  # Router con endpoints de debug (solo para dev/testing)
 
 # -----------------------------------------------------------------------------
 # Logging base
@@ -145,3 +146,4 @@ app.include_router(tasks.router)
 app.include_router(auth_router)
 app.include_router(admin_license.router, tags=["Admin"])
 app.include_router(superadmin.router)
+app.include_router(debug_router)

@@ -40,23 +40,38 @@ export const authProvider: AuthProvider = {
     return Promise.resolve();
   },
 
-  logout: async () => {
-    // Tu backend tiene /logout_all (204). Podríamos llamarlo, pero no es obligatorio para MVP.
-    // Si querés invalidar refresh tokens server-side, lo agregamos luego.
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("employee_id");
-    localStorage.removeItem("company_id");
-    localStorage.removeItem("name");
-    localStorage.removeItem("email");
-    window.location.hash = "#/login";
+    logout: async () => {
+    localStorage.clear();
     return Promise.resolve();
   },
 
-  checkAuth: async () => {
-    const token = localStorage.getItem("access_token");
-    if (!token) return Promise.reject();
-    return Promise.resolve();
+    checkAuth: async () => {
+    const access = localStorage.getItem("access_token");
+    if (access) return Promise.resolve();
+
+    // Si no hay access, intentamos recuperar con refresh (si existe)
+    const refresh = localStorage.getItem("refresh_token");
+    if (!refresh) return Promise.reject();
+
+    try {
+      // Esto dispara el flujo del httpClient:
+      // - 401 inicial
+      // - refresh (si corresponde)
+      // - reintento
+      await httpClient("/health", { method: "GET" }); 
+      // 🔁 IMPORTANTE: /health debe ser un endpoint protegido (requiere get_current_user)
+      // Si no tenés uno así, reemplazalo por cualquier endpoint protegido barato.
+      return Promise.resolve();
+    } catch {
+      // si no pudo revalidar sesión -> limpiar y mandar login
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      localStorage.removeItem("employee_id");
+      localStorage.removeItem("company_id");
+      localStorage.removeItem("name");
+      localStorage.removeItem("email");
+      return Promise.reject();
+    }
   },
 
   checkError: async (error) => {

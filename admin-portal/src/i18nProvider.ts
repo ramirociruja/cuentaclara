@@ -70,6 +70,8 @@ const overridesEs: any = {
       data_provider_error: "Error del proveedor de datos",
       canceled: "Operación cancelada",
       logged_out: "Sesión cerrada",
+      not_authorized: "No autorizado",
+      i18n_error: "Error de traducción",
     },
 
     message: {
@@ -89,6 +91,7 @@ const overridesEs: any = {
       yes: "Sí",
       not_found: "No encontrado",
       empty: "Vacío",
+      unauthorized: "No autorizado",
     },
 
     auth: {
@@ -98,6 +101,17 @@ const overridesEs: any = {
       logout: "Cerrar sesión",
       username: "Usuario",
       password: "Contraseña",
+
+      // ✅ FALTANTES que te aparecen en consola
+      auth_check_error: "No autorizado",
+      user_menu: "Perfil",
+      authentication_error: "Error de autenticación",
+      login: "Iniciar sesión",
+
+      // ✅ Algunos que RA puede pedir según versión/tema
+      forgot_password: "¿Olvidaste tu contraseña?",
+      invalid_email: "Email inválido",
+      required: "Requerido",
     },
 
     validation: {
@@ -127,6 +141,11 @@ const overridesEs: any = {
         all_missing: "No se pudieron encontrar referencias",
         many_missing: "Algunas referencias ya no están disponibles",
         single_missing: "La referencia asociada ya no está disponible",
+      },
+
+      password: {
+        toggle_hidden: "Mostrar contraseña",
+        toggle_visible: "Ocultar contraseña",
       },
     },
 
