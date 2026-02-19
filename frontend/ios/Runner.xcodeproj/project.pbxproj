@@ -45,6 +45,15 @@
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
 		14ACFC10004E0EDD00216404 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		19AB67B32F43EAB00073C0F5 /* flutter_lldb_helper.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = flutter_lldb_helper.py; sourceTree = "<group>"; };
+		19AB67B42F43EAB00073C0F5 /* flutter_lldbinit */ = {isa = PBXFileReference; lastKnownFileType = text; path = flutter_lldbinit; sourceTree = "<group>"; };
+		19AB67B62F43EAB00073C0F5 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = AppFrameworkInfo.plist; sourceTree = "<group>"; };
+		19AB67B72F43EAB00073C0F5 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		19AB67B82F43EAB00073C0F5 /* Flutter.podspec */ = {isa = PBXFileReference; lastKnownFileType = text; path = Flutter.podspec; sourceTree = "<group>"; };
+		19AB67B92F43EAB00073C0F5 /* flutter_export_environment.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = flutter_export_environment.sh; sourceTree = "<group>"; };
+		19AB67BA2F43EAB00073C0F5 /* Generated.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Generated.xcconfig; sourceTree = "<group>"; };
+		19AB67BB2F43EAB00073C0F5 /* Profile.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Profile.xcconfig; sourceTree = "<group>"; };
+		19AB67BC2F43EAB00073C0F5 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		1C043DDBCAD29D5B4B602E9A /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -87,6 +96,30 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		19AB67B52F43EAB00073C0F5 /* ephemeral */ = {
+			isa = PBXGroup;
+			children = (
+				19AB67B32F43EAB00073C0F5 /* flutter_lldb_helper.py */,
+				19AB67B42F43EAB00073C0F5 /* flutter_lldbinit */,
+			);
+			path = ephemeral;
+			sourceTree = "<group>";
+		};
+		19AB67BD2F43EAB00073C0F5 /* Flutter */ = {
+			isa = PBXGroup;
+			children = (
+				19AB67B52F43EAB00073C0F5 /* ephemeral */,
+				19AB67B62F43EAB00073C0F5 /* AppFrameworkInfo.plist */,
+				19AB67B72F43EAB00073C0F5 /* Debug.xcconfig */,
+				19AB67B82F43EAB00073C0F5 /* Flutter.podspec */,
+				19AB67B92F43EAB00073C0F5 /* flutter_export_environment.sh */,
+				19AB67BA2F43EAB00073C0F5 /* Generated.xcconfig */,
+				19AB67BB2F43EAB00073C0F5 /* Profile.xcconfig */,
+				19AB67BC2F43EAB00073C0F5 /* Release.xcconfig */,
+			);
+			path = Flutter;
+			sourceTree = "<group>";
+		};
 		1EB75D1E97FFC37014B8FB08 /* Pods */ = {
 			isa = PBXGroup;
 			children = (
@@ -137,6 +170,7 @@
 				331C8082294A63A400263BE5 /* RunnerTests */,
 				1EB75D1E97FFC37014B8FB08 /* Pods */,
 				8F33B4144872677BF8BB1608 /* Frameworks */,
+				19AB67BD2F43EAB00073C0F5 /* Flutter */,
 			);
 			sourceTree = "<group>";
 		};
@@ -469,14 +503,14 @@
 		};
 		249021D4217E4FDB00AE95B9 /* Profile */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 7AFA3C8E1D35360C0083082E /* Release.xcconfig */;
+			baseConfigurationReference = 19AB67BB2F43EAB00073C0F5 /* Profile.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = XQJ843FZ7Q;
 				ENABLE_BITCODE = NO;
@@ -487,13 +521,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cuentaclara.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "CuentaClara App Store";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
+				TREE_SHAKE_ICONS = false;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Profile;
@@ -668,7 +703,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = XQJ843FZ7Q;
 				ENABLE_BITCODE = NO;
@@ -679,7 +714,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cuentaclara.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -687,6 +722,7 @@
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
+				TREE_SHAKE_ICONS = false;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
@@ -700,7 +736,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = XQJ843FZ7Q;
 				ENABLE_BITCODE = NO;
@@ -711,13 +747,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.cuentaclara.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "CuentaClara App Store";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
+				TREE_SHAKE_ICONS = false;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
