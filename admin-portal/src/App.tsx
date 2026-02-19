@@ -12,7 +12,6 @@ import { LoanList, LoanCreate, LoanEdit, LoanShow } from "./resources/loans";
 import { PaymentsList, PaymentsShow, PaymentsEdit, LoanPaymentsCreate } from "./resources/payments";
 import { InstallmentShow, InstallmentsList } from "./resources/installments";
 import { EmployeesEdit, EmployeesList, EmployeesShow } from "./resources/employees";
-import { i18nProvider } from "./i18nProvider";
 import { ServiceGate } from "./app/ServiceGate";
 import { ServiceSuspendedPage } from "./pages/ServiceSuspendedPage";
 import MyCompanyPage from "./pages/MyCompanyPage";
@@ -42,7 +41,6 @@ export default function App() {
   return (
     <Admin
       dataProvider={dataProvider}
-      i18nProvider={i18nProvider}
       authProvider={authProvider}
       layout={MyLayout}
       dashboard={DashboardScreen}
