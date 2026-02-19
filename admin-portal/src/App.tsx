@@ -15,6 +15,7 @@ import { EmployeesEdit, EmployeesList, EmployeesShow } from "./resources/employe
 import { i18nProvider } from "./i18nProvider";
 import { ServiceGate } from "./app/ServiceGate";
 import { ServiceSuspendedPage } from "./pages/ServiceSuspendedPage";
+import MyCompanyPage from "./pages/MyCompanyPage";
 
 
 function CollectableList() {
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardScreen />} />
         <Route path="/bulk-payments" element={<BulkPaymentsScreen />} />
         <Route path="/coupons" element={<CouponsScreen />} />
+        <Route path="/my-company" element={<MyCompanyPage />} />
       </CustomRoutes>
 
       <Resource

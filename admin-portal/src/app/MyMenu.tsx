@@ -19,6 +19,7 @@ import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import ViewListIcon from "@mui/icons-material/ViewList";
 import LocalPrintshopIcon from "@mui/icons-material/LocalPrintshop";
 import BadgeIcon from "@mui/icons-material/Badge";
+import ApartmentIcon from "@mui/icons-material/Apartment";
 
 type SectionProps = {
   label: string;
@@ -120,6 +121,11 @@ export function MyMenu() {
           to="/employees"
           primaryText="Empleados"
           leftIcon={<BadgeIcon />}
+        />
+        <Menu.Item
+          to="/my-company"
+          primaryText="Mi Empresa"
+          leftIcon={<ApartmentIcon />}
         />
       </Section>
     </Menu>
