@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:frontend/services/api_service.dart';
 import 'package:frontend/screens/home_screen.dart';
 
@@ -99,6 +100,69 @@ class _LoginScreenState extends State<LoginScreen> {
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ),
+    );
+  }
+
+  void _showHowToGetAccountDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('¿Cómo obtener una cuenta?'),
+          content: const Text(
+            'CuentaClara es un servicio por suscripción.\n\n'
+            'Para solicitar acceso y crear tu cuenta, enviá un email a:\n'
+            'cuentaclara@gmail.com\n\n'
+            'Incluí tu nombre, tu negocio y la cantidad de cobradores.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(
+                  const ClipboardData(text: 'cuentaclara@gmail.com'),
+                );
+                if (!mounted) return;
+                Navigator.of(ctx).pop();
+                _showSnack('Email copiado: cuentaclara@gmail.com');
+              },
+              child: const Text('Copiar email'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cerrar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildHowToGetAccountLink() {
+    return Column(
+      children: [
+        const SizedBox(height: 8),
+        Text(
+          '¿No tenés cuenta?',
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+        ),
+        TextButton(
+          onPressed: _showHowToGetAccountDialog,
+          style: TextButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: const Size(0, 0),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            '¿Cómo obtener una cuenta?',
+            style: TextStyle(
+              color: Colors.grey.shade700, // 🔽 más neutro
+              fontSize: 13,
+              fontWeight: FontWeight.w500, // 🔽 menos peso
+              decoration: TextDecoration.underline, // 🔽 estilo link
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -320,6 +384,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 40),
+                    _buildHowToGetAccountLink(),
                     const SizedBox(height: 12),
                   ],
                 ),
