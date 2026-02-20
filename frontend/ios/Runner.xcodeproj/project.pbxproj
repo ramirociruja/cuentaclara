@@ -361,7 +361,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin";
+			shellScript = "if [ -n \"$DART_DEFINES\" ] && printf %s \"$DART_DEFINES\" | grep -q '[^A-Za-z0-9+/=,-]'; then\n  echo warning: Invalid DART_DEFINES format detected, clearing DART_DEFINES to avoid Flutter build failure.\n  export DART_DEFINES=\"\"\nfi\n/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" embed_and_thin";
 		};
 		7626F2DB90A9DFD853816543 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -393,7 +393,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build";
+			shellScript = "if [ -n \"$DART_DEFINES\" ] && printf %s \"$DART_DEFINES\" | grep -q '[^A-Za-z0-9+/=,-]'; then\n  echo warning: Invalid DART_DEFINES format detected, clearing DART_DEFINES to avoid Flutter build failure.\n  export DART_DEFINES=\"\"\nfi\n/bin/sh \"$FLUTTER_ROOT/packages/flutter_tools/bin/xcode_backend.sh\" build";
 		};
 /* End PBXShellScriptBuildPhase section */
 
