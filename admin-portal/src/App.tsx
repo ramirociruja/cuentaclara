@@ -1,11 +1,11 @@
-import { Admin, Resource, List, Datagrid, TextField, NumberField, Layout, CustomRoutes } from "react-admin";
+import { Admin, Resource, List, Datagrid, TextField, NumberField, CustomRoutes } from "react-admin";
 import { authProvider } from "./app/authProvider";
 import { dataProvider } from "./app/dataProvider";
 import BulkPaymentsScreen from "./pages/BulkPayments/BulkPaymentsScreen";
 import CouponsScreen from "./pages/Coupons/CouponsScreen";
 import DashboardScreen from "./pages/Dashboard/DashboardScreen";
 import { Route } from "react-router-dom";
-import { MyMenu } from "./app/MyMenu";
+
 
 import { CustomersList, CustomersCreate, CustomersEdit, CustomersShow } from "./resources/customers";
 import { LoanList, LoanCreate, LoanEdit, LoanShow } from "./resources/loans";
@@ -16,6 +16,9 @@ import { ServiceGate } from "./app/ServiceGate";
 import { ServiceSuspendedPage } from "./pages/ServiceSuspendedPage";
 import MyCompanyPage from "./pages/MyCompanyPage";
 import LoginPage from "./pages/LoginPage";
+import { theme } from "./app/theme";
+import { MyLayout } from "./app/MyLayout";
+import { i18nProvider } from "./i18nProvider";
 
 
 function CollectableList() {
@@ -36,16 +39,23 @@ function CollectableList() {
   );
 }
 
-const MyLayout = (props: any) => <ServiceGate><Layout {...props} menu={MyMenu} /></ServiceGate>;
+const AppLayout = (props: any) => (
+  <ServiceGate>
+    <MyLayout {...props} />
+  </ServiceGate>
+);
 
 export default function App() {
   return (
     <Admin
       dataProvider={dataProvider}
       authProvider={authProvider}
-      layout={MyLayout}
+      layout={AppLayout}
       dashboard={DashboardScreen}
       loginPage={LoginPage}
+      theme={theme}
+      disableTelemetry
+      i18nProvider={i18nProvider}
     >
       <CustomRoutes noLayout>
           <Route path="/service-suspended" element={<ServiceSuspendedPage />} />

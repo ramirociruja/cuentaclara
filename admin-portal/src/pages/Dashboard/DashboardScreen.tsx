@@ -27,6 +27,7 @@ import {
   Legend,
 } from "recharts";
 import { useTheme, alpha } from "@mui/material/styles";
+import { Title } from "react-admin";
 
 
 
@@ -338,7 +339,7 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
 
 
   return (
-    <Box p={2}>
+    <><Title title="Resumen general" /><Box p={2}>
       <Stack spacing={2}>
         {/* Header + filtros */}
         <Paper sx={{ p: 2 }}>
@@ -351,7 +352,7 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
             <Box>
               <Typography variant="h6">Resumen general</Typography>
               <Typography variant="body2" sx={{ opacity: 0.75 }}>
-              Resumen financiero y operativo del período.
+                Resumen financiero y operativo del período.
               </Typography>
             </Box>
 
@@ -379,9 +380,8 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
                 onChange={(e) => {
                   setPreset("custom");
                   setStartDate(e.target.value);
-                }}
-                InputLabelProps={{ shrink: true }}
-              />
+                } }
+                InputLabelProps={{ shrink: true }} />
 
               <TextField
                 size="small"
@@ -391,9 +391,8 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
                 onChange={(e) => {
                   setPreset("custom");
                   setEndDate(e.target.value);
-                }}
-                InputLabelProps={{ shrink: true }}
-              />
+                } }
+                InputLabelProps={{ shrink: true }} />
             </Stack>
           </Stack>
 
@@ -407,8 +406,8 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
         )}
 
         {/* =========================================
-            BLOQUE 1: COBRANZA (lo que tiene que resaltar)
-           ========================================= */}
+        BLOQUE 1: COBRANZA (lo que tiene que resaltar)
+       ========================================= */}
         <Paper sx={{ p: 2 }}>
           <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems="baseline">
             <Typography variant="subtitle1">Cobranza del período</Typography>
@@ -430,20 +429,16 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
               title="Esperado (cuotas del período)"
               value={money(expected)}
               subtitle="Suma de cuotas que vencen en el rango"
-              accent="info"
-            />
+              accent="info" />
             <MetricCard
               title="Aplicado a cuotas del período"
               value={money(applied)}
               subtitle={`Efectividad ${effPct}%`}
               accent={eff01 >= 0.85 ? "success" : eff01 >= 0.6 ? "warning" : "error"}
-              right={
-                <Chip
-                  size="small"
-                  label={`${effPct}%`}
-                  color={eff01 >= 0.85 ? "success" : eff01 >= 0.6 ? "warning" : "error"}
-                />
-              }
+              right={<Chip
+                size="small"
+                label={`${effPct}%`}
+                color={eff01 >= 0.85 ? "success" : eff01 >= 0.6 ? "warning" : "error"} />}
             >
               <Box sx={{ mt: 1 }}>
                 <LinearProgress variant="determinate" value={clampPct01(eff01) * 100} />
@@ -454,15 +449,13 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
               title="Pendiente del período"
               value={money(pending)}
               subtitle={pending > 0 ? "Foco: recuperar saldo pendiente" : "Al día ✅"}
-              accent={pending > 0 ? "warning" : "success"}
-            />
+              accent={pending > 0 ? "warning" : "success"} />
 
             <MetricCard
               title="Pagos registrados (en período)"
               value={money(k?.collected_amount || 0)}
               subtitle={`${k?.payments_count || 0} pagos`}
-              accent="primary"
-            />
+              accent="primary" />
           </Box>
 
           <Divider sx={{ my: 2 }} />
@@ -511,8 +504,8 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
         </Paper>
 
         {/* =========================================
-            BLOQUE 2: ACTIVIDAD (altas + cambios)
-           ========================================= */}
+        BLOQUE 2: ACTIVIDAD (altas + cambios)
+       ========================================= */}
         <Box
           sx={{
             display: "grid",
@@ -543,341 +536,329 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
                 title="Ticket promedio"
                 value={money(issuedAvgTicket)}
                 subtitle={`${issuedTotalOps} altas`}
-                accent="info"
-              />
+                accent="info" />
               <MetricCard title="Total a cobrar (altas)" value={money(issuedAgg.total_due)} accent="success" />
             </Box>
 
             <Divider sx={{ my: 2 }} />
 
             <Typography variant="subtitle2">Detalle por cobrador</Typography>
-            <Box sx={{ maxHeight: 320, overflow: "auto", mt: 1 }}> 
-            <Table size="small" sx={{ mt: 1 }}>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Cobrador</TableCell>
-                  <TableCell align="right">Créditos</TableCell>
-                  <TableCell align="right">Ticket prom.</TableCell>
-                  <TableCell align="right">Total a cobrar</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {(data?.issued_by_collector || []).map((r) => (
-                  <TableRow key={r.collector_id} hover>
-                    <TableCell>{r.collector_name || `#${r.collector_id}`}</TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
-                        <Typography variant="body2">{r.loans_count || 0}</Typography>
-                        <Typography variant="caption" sx={{ opacity: 0.75 }}>
-                          ({money(r.loans_principal_amount || 0)})
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-                    <TableCell align="right">
-                      {(() => {
-                        const ops = (r.loans_count || 0) + (r.purchases_count || 0);
-                        const total = (r.loans_principal_amount || 0) + (r.purchases_total_due || 0);
-                        const avg = ops > 0 ? total / ops : 0;
-
-                        return (
-                          <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="baseline">
-                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                              {money(avg)}
-                            </Typography>
-                            <Typography variant="caption" sx={{ opacity: 0.75 }}>
-                              ({ops} altas)
-                            </Typography>
-                          </Stack>
-                        );
-                      })()}
-                    </TableCell>
-
-                    <TableCell align="right">{money((r.loans_total_due || 0) + (r.purchases_total_due || 0))}</TableCell>
+            <Box sx={{ maxHeight: 320, overflow: "auto", mt: 1 }}>
+              <Table size="small" sx={{ mt: 1 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Cobrador</TableCell>
+                    <TableCell align="right">Créditos</TableCell>
+                    <TableCell align="right">Ticket prom.</TableCell>
+                    <TableCell align="right">Total a cobrar</TableCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {(data?.issued_by_collector || []).map((r) => (
+                    <TableRow key={r.collector_id} hover>
+                      <TableCell>{r.collector_name || `#${r.collector_id}`}</TableCell>
+                      <TableCell align="right">
+                        <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+                          <Typography variant="body2">{r.loans_count || 0}</Typography>
+                          <Typography variant="caption" sx={{ opacity: 0.75 }}>
+                            ({money(r.loans_principal_amount || 0)})
+                          </Typography>
+                        </Stack>
+                      </TableCell>
+                      <TableCell align="right">
+                        {(() => {
+                          const ops = (r.loans_count || 0) + (r.purchases_count || 0);
+                          const total = (r.loans_principal_amount || 0) + (r.purchases_total_due || 0);
+                          const avg = ops > 0 ? total / ops : 0;
+
+                          return (
+                            <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="baseline">
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                {money(avg)}
+                              </Typography>
+                              <Typography variant="caption" sx={{ opacity: 0.75 }}>
+                                ({ops} altas)
+                              </Typography>
+                            </Stack>
+                          );
+                        })()}
+                      </TableCell>
+
+                      <TableCell align="right">{money((r.loans_total_due || 0) + (r.purchases_total_due || 0))}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </Box>
           </Paper>
 
           {/* Cambios de estado */}
-            <Paper sx={{ p: 2 }}>
-  {(() => {
-    const seriesByCollector = data?.cashflow_30d_by_collector || [];
+          <Paper sx={{ p: 2 }}>
+            {(() => {
+              const seriesByCollector = data?.cashflow_30d_by_collector || [];
 
-    const collectorOptions = [
-      { id: -1, name: "Todos" },
-      ...seriesByCollector
-        .slice()
-        .sort((a, b) => (a.collector_name || "").localeCompare(b.collector_name || ""))
-        .map((c) => ({
-          id: c.collector_id,
-          name: c.collector_name || `#${c.collector_id}`,
-        })),
-    ];
+              const collectorOptions = [
+                { id: -1, name: "Todos" },
+                ...seriesByCollector
+                  .slice()
+                  .sort((a, b) => (a.collector_name || "").localeCompare(b.collector_name || ""))
+                  .map((c) => ({
+                    id: c.collector_id,
+                    name: c.collector_name || `#${c.collector_id}`,
+                  })),
+              ];
 
-    const selected =
-      cashflowCollector === -1
-        ? null
-        : seriesByCollector.find((x) => x.collector_id === cashflowCollector) || null;
+              const selected = cashflowCollector === -1
+                ? null
+                : seriesByCollector.find((x) => x.collector_id === cashflowCollector) || null;
 
-    // Serie base: si “Todos”, sumamos por fecha
-    const points =
-      selected?.points?.length
-        ? selected.points.map((p) => ({
-            date: String(p.date).slice(0, 10),
-            collected_amount: p.collected_amount || 0,
-            issued_amount: p.issued_amount || 0,
-          }))
-        : (() => {
-            const acc = new Map<string, { collected: number; issued: number }>();
-            for (const c of seriesByCollector) {
-              for (const p of c.points || []) {
-                const key = String(p.date).slice(0, 10);
-                const prev = acc.get(key) || { collected: 0, issued: 0 };
-                prev.collected += p.collected_amount || 0;
-                prev.issued += p.issued_amount || 0;
-                acc.set(key, prev);
-              }
-            }
-            const keys = Array.from(acc.keys()).sort();
-            return keys.map((k) => ({
-              date: k,
-              collected_amount: acc.get(k)?.collected || 0,
-              issued_amount: acc.get(k)?.issued || 0,
-            }));
-          })();
+              // Serie base: si “Todos”, sumamos por fecha
+              const points = selected?.points?.length
+                ? selected.points.map((p) => ({
+                  date: String(p.date).slice(0, 10),
+                  collected_amount: p.collected_amount || 0,
+                  issued_amount: p.issued_amount || 0,
+                }))
+                : (() => {
+                  const acc = new Map<string, { collected: number; issued: number; }>();
+                  for (const c of seriesByCollector) {
+                    for (const p of c.points || []) {
+                      const key = String(p.date).slice(0, 10);
+                      const prev = acc.get(key) || { collected: 0, issued: 0 };
+                      prev.collected += p.collected_amount || 0;
+                      prev.issued += p.issued_amount || 0;
+                      acc.set(key, prev);
+                    }
+                  }
+                  const keys = Array.from(acc.keys()).sort();
+                  return keys.map((k) => ({
+                    date: k,
+                    collected_amount: acc.get(k)?.collected || 0,
+                    issued_amount: acc.get(k)?.issued || 0,
+                  }));
+                })();
 
-    const showCollected = cashflowMode === "both" || cashflowMode === "collected";
-    const showIssued = cashflowMode === "both" || cashflowMode === "issued";
+              const showCollected = cashflowMode === "both" || cashflowMode === "collected";
+              const showIssued = cashflowMode === "both" || cashflowMode === "issued";
 
-    // Datos para Recharts (xAxis corto)
-    const chartData = points.map((r) => ({
-      day: r.date.slice(5, 10), // MM-DD (compacto)
-      collected: r.collected_amount,
-      issued: r.issued_amount,
-    }));
+              // Datos para Recharts (xAxis corto)
+              const chartData = points.map((r) => ({
+                day: r.date.slice(5, 10), // MM-DD (compacto)
+                collected: r.collected_amount,
+                issued: r.issued_amount,
+              }));
 
-    const totalCollected = points.reduce((a, r) => a + (r.collected_amount || 0), 0);
-    const totalIssued = points.reduce((a, r) => a + (r.issued_amount || 0), 0);
+              const totalCollected = points.reduce((a, r) => a + (r.collected_amount || 0), 0);
+              const totalIssued = points.reduce((a, r) => a + (r.issued_amount || 0), 0);
 
-    return (
-      <>
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          justifyContent="space-between"
-          alignItems={{ md: "center" }}
-          spacing={1}
-        >
-          <Box>
-            <Typography variant="subtitle1">Movimientos últimos 30 días</Typography>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              Cobros (registrados) vs Plata prestada
-            </Typography>
-          </Box>
+              return (
+                <>
+                  <Stack
+                    direction={{ xs: "column", md: "row" }}
+                    justifyContent="space-between"
+                    alignItems={{ md: "center" }}
+                    spacing={1}
+                  >
+                    <Box>
+                      <Typography variant="subtitle1">Movimientos últimos 30 días</Typography>
+                      <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                        Cobros (registrados) vs Plata prestada
+                      </Typography>
+                    </Box>
 
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            <TextField
-              select
-              size="small"
-              label="Cobrador"
-              value={cashflowCollector}
-              onChange={(e) => setCashflowCollector(Number(e.target.value))}
-              sx={{ minWidth: 220 }}
-            >
-              {collectorOptions.map((c) => (
-                <MenuItem key={c.id} value={c.id}>
-                  {c.name}
-                </MenuItem>
-              ))}
-            </TextField>
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                      <TextField
+                        select
+                        size="small"
+                        label="Cobrador"
+                        value={cashflowCollector}
+                        onChange={(e) => setCashflowCollector(Number(e.target.value))}
+                        sx={{ minWidth: 220 }}
+                      >
+                        {collectorOptions.map((c) => (
+                          <MenuItem key={c.id} value={c.id}>
+                            {c.name}
+                          </MenuItem>
+                        ))}
+                      </TextField>
 
-            <TextField
-              select
-              size="small"
-              label="Mostrar"
-              value={cashflowMode}
-              onChange={(e) => setCashflowMode(e.target.value as any)}
-              sx={{ minWidth: 180 }}
-            >
-              <MenuItem value="both">Cobrado + Prestado</MenuItem>
-              <MenuItem value="collected">Solo Cobrado</MenuItem>
-              <MenuItem value="issued">Solo Prestado</MenuItem>
-            </TextField>
-          </Stack>
-        </Stack>
+                      <TextField
+                        select
+                        size="small"
+                        label="Mostrar"
+                        value={cashflowMode}
+                        onChange={(e) => setCashflowMode(e.target.value as any)}
+                        sx={{ minWidth: 180 }}
+                      >
+                        <MenuItem value="both">Cobrado + Prestado</MenuItem>
+                        <MenuItem value="collected">Solo Cobrado</MenuItem>
+                        <MenuItem value="issued">Solo Prestado</MenuItem>
+                      </TextField>
+                    </Stack>
+                  </Stack>
 
-        <Divider sx={{ my: 2 }} />
+                  <Divider sx={{ my: 2 }} />
 
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)" },
-            mb: 1,
-          }}
-        >
-          <MetricCard title="Total cobrado (30 días)" value={money(totalCollected)} subtitle="Pagos registrados" accent="primary" />
-          <MetricCard title="Total prestado (30 días)" value={money(totalIssued)} subtitle="Dinero total prestado" accent="info" />
-        </Box>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gap: 2,
+                      gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)" },
+                      mb: 1,
+                    }}
+                  >
+                    <MetricCard title="Total cobrado (30 días)" value={money(totalCollected)} subtitle="Pagos registrados" accent="primary" />
+                    <MetricCard title="Total prestado (30 días)" value={money(totalIssued)} subtitle="Dinero total prestado" accent="info" />
+                  </Box>
 
-        <Box
-  sx={{
-    height: 300,
-    borderRadius: 2,
-    bgcolor: alpha(theme.palette.background.paper, 0.6),
-    border: "1px solid",
-    borderColor: "divider",
-    p: 1.5,
-  }}
->
-  <ResponsiveContainer width="100%" height={300}>
-  <BarChart
-    data={chartData}
-    margin={{ top: 8, right: 10, left: 0, bottom: 0 }}
-    barCategoryGap={10}
-  >
-    <CartesianGrid
-      stroke={alpha(theme.palette.text.primary, 0.18)}
-      strokeDasharray="4 4"
-    />
+                  <Box
+                    sx={{
+                      height: 300,
+                      borderRadius: 2,
+                      bgcolor: alpha(theme.palette.background.paper, 0.6),
+                      border: "1px solid",
+                      borderColor: "divider",
+                      p: 1.5,
+                    }}
+                  >
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart
+                        data={chartData}
+                        margin={{ top: 8, right: 10, left: 0, bottom: 0 }}
+                        barCategoryGap={10}
+                      >
+                        <CartesianGrid
+                          stroke={alpha(theme.palette.text.primary, 0.18)}
+                          strokeDasharray="4 4" />
 
-    <XAxis
-      dataKey="day"
-      tickMargin={8}
-      interval={2}
-      tick={{ fill: alpha(theme.palette.text.primary, 0.7), fontSize: 12 }}
-      axisLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }}
-      tickLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }}
-    />
+                        <XAxis
+                          dataKey="day"
+                          tickMargin={8}
+                          interval={2}
+                          tick={{ fill: alpha(theme.palette.text.primary, 0.7), fontSize: 12 }}
+                          axisLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }}
+                          tickLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }} />
 
-    <YAxis
-      tickFormatter={(v) =>
-        new Intl.NumberFormat("es-AR", { notation: "compact" }).format(v)
-      }
-      tick={{ fill: alpha(theme.palette.text.primary, 0.7), fontSize: 12 }}
-      axisLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }}
-      tickLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }}
-    />
+                        <YAxis
+                          tickFormatter={(v) => new Intl.NumberFormat("es-AR", { notation: "compact" }).format(v)}
+                          tick={{ fill: alpha(theme.palette.text.primary, 0.7), fontSize: 12 }}
+                          axisLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }}
+                          tickLine={{ stroke: alpha(theme.palette.text.primary, 0.2) }} />
 
-    <Tooltip
-      cursor={{ fill: alpha(theme.palette.primary.main, 0.08) }}
-      content={({ active, payload, label }) => {
-        if (!active || !payload || payload.length === 0) return null;
+                        <Tooltip
+                          cursor={{ fill: alpha(theme.palette.primary.main, 0.08) }}
+                          content={({ active, payload, label }) => {
+                            if (!active || !payload || payload.length === 0) return null;
 
-        const cobrado = (payload.find((p) => p.dataKey === "collected")?.value as number) || 0;
-        const prestado = (payload.find((p) => p.dataKey === "issued")?.value as number) || 0;
+                            const cobrado = (payload.find((p) => p.dataKey === "collected")?.value as number) || 0;
+                            const prestado = (payload.find((p) => p.dataKey === "issued")?.value as number) || 0;
 
-        const total = cobrado + prestado;
+                            const total = cobrado + prestado;
 
-        return (
-          <Paper
-            elevation={6}
-            sx={{
-              p: 1.25,
-              borderRadius: 2,
-              bgcolor: "background.paper",
-              border: "1px solid",
-              borderColor: "divider",
-              minWidth: 220,
-            }}
-          >
-            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-              Día {label}
-            </Typography>
+                            return (
+                              <Paper
+                                elevation={6}
+                                sx={{
+                                  p: 1.25,
+                                  borderRadius: 2,
+                                  bgcolor: "background.paper",
+                                  border: "1px solid",
+                                  borderColor: "divider",
+                                  minWidth: 220,
+                                }}
+                              >
+                                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                                  Día {label}
+                                </Typography>
 
-            {showCollected && (
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Box sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: theme.palette.success.main }} />
-                  <Typography variant="body2">Cobrado</Typography>
-                </Stack>
-                <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                  {money(cobrado)}
-                </Typography>
-              </Stack>
-            )}
+                                {showCollected && (
+                                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                      <Box sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: theme.palette.success.main }} />
+                                      <Typography variant="body2">Cobrado</Typography>
+                                    </Stack>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {money(cobrado)}
+                                    </Typography>
+                                  </Stack>
+                                )}
 
-            {showIssued && (
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Box sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: theme.palette.warning.main }} />
-                  <Typography variant="body2">Prestado</Typography>
-                </Stack>
-                <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                  {money(prestado)}
-                </Typography>
-              </Stack>
-            )}
+                                {showIssued && (
+                                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                      <Box sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: theme.palette.warning.main }} />
+                                      <Typography variant="body2">Prestado</Typography>
+                                    </Stack>
+                                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                      {money(prestado)}
+                                    </Typography>
+                                  </Stack>
+                                )}
 
-            {(showCollected && showIssued) && (
-              <Divider sx={{ my: 0.75 }} />
-            )}
+                                {(showCollected && showIssued) && (
+                                  <Divider sx={{ my: 0.75 }} />
+                                )}
 
-            {(showCollected && showIssued) && (
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
-                <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                  Total día
-                </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 800 }}>
-                  {money(total)}
-                </Typography>
-              </Stack>
-            )}
+                                {(showCollected && showIssued) && (
+                                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                                    <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                                      Total día
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                                      {money(total)}
+                                    </Typography>
+                                  </Stack>
+                                )}
+                              </Paper>
+                            );
+                          } } />
+
+                        <Legend
+                          verticalAlign="top"
+                          align="right"
+                          iconType="circle"
+                          formatter={(value) => (
+                            <span style={{ color: alpha(theme.palette.text.primary, 0.85), fontSize: 12 }}>
+                              {value === "collected" ? "Cobrado" : "Prestado"}
+                            </span>
+                          )} />
+
+                        {/* ✅ BARRAS APILADAS (sin radius + colores más contrastantes) */}
+                        {showIssued && (
+                          <Bar
+                            dataKey="issued"
+                            name="issued"
+                            stackId="cashflow"
+                            fill={theme.palette.warning.main} // Prestado
+                            barSize={28}
+                            maxBarSize={36} />
+                        )}
+
+                        {showCollected && (
+                          <Bar
+                            dataKey="collected"
+                            name="collected"
+                            stackId="cashflow"
+                            fill={theme.palette.success.main} // Cobrado
+                            barSize={28}
+                            maxBarSize={36} />
+                        )}
+                      </BarChart>
+                    </ResponsiveContainer>
+
+                  </Box>
+
+                </>
+              );
+            })()}
           </Paper>
-        );
-      }}
-    />
-
-    <Legend
-      verticalAlign="top"
-      align="right"
-      iconType="circle"
-      formatter={(value) => (
-        <span style={{ color: alpha(theme.palette.text.primary, 0.85), fontSize: 12 }}>
-          {value === "collected" ? "Cobrado" : "Prestado"}
-        </span>
-      )}
-    />
-
-    {/* ✅ BARRAS APILADAS (sin radius + colores más contrastantes) */}
-    {showIssued && (
-      <Bar
-        dataKey="issued"
-        name="issued"
-        stackId="cashflow"
-        fill={theme.palette.warning.main} // Prestado
-        barSize={28}
-        maxBarSize={36}
-      />
-    )}
-
-    {showCollected && (
-      <Bar
-        dataKey="collected"
-        name="collected"
-        stackId="cashflow"
-        fill={theme.palette.success.main} // Cobrado
-        barSize={28}
-        maxBarSize={36}
-      />
-    )}
-  </BarChart>
-</ResponsiveContainer>
-
-</Box>
-
-      </>
-    );
-  })()}
-</Paper>
 
 
         </Box>
 
         {/* =========================================
-            BLOQUE 3: MORA (separado, foco “riesgo”)
-           ========================================= */}
+        BLOQUE 3: MORA (separado, foco “riesgo”)
+       ========================================= */}
         <Paper sx={{ p: 2 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="baseline">
             <Typography variant="subtitle1">Mora (al día de hoy)</Typography>
@@ -885,8 +866,7 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
               size="small"
               label={overdueAmount > 0 ? "Atención" : "OK"}
               color={overdueAmount > 0 ? "warning" : "success"}
-              variant="outlined"
-            />
+              variant="outlined" />
           </Stack>
 
           <Divider sx={{ my: 2 }} />
@@ -940,8 +920,7 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
                       <Chip
                         size="small"
                         label={`${o.days_overdue}d`}
-                        color={o.days_overdue >= 14 ? "error" : "warning"}
-                      />
+                        color={o.days_overdue >= 14 ? "error" : "warning"} />
                     </TableCell>
 
                     <TableCell>
@@ -960,6 +939,6 @@ const issuedAvgTicket = issuedTotalOps > 0 ? (issuedAgg.principal || 0) / issued
           </Paper>
         )}
       </Stack>
-    </Box>
+    </Box></>
   );
 }

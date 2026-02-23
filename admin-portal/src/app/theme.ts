@@ -3,10 +3,10 @@ import { createTheme } from "@mui/material/styles";
 export const theme = createTheme({
   palette: {
     mode: "light",
-    primary: { main: "#60a5fa" }, // celeste del botón/login
+    primary: { main: "#60a5fa" },
     secondary: { main: "#1e293b" },
     background: {
-      default: "#f8fafc",
+      default: "#f1f5f9",
       paper: "#ffffff",
     },
     text: {
@@ -14,8 +14,11 @@ export const theme = createTheme({
       secondary: "#334155",
     },
   },
+
   shape: { borderRadius: 12 },
+
   components: {
+    // 🔵 APP BAR
     MuiAppBar: {
       styleOverrides: {
         root: {
@@ -25,28 +28,74 @@ export const theme = createTheme({
         },
       },
     },
+
+    // 🔵 SIDEBAR (FIX PRINCIPAL)
     MuiDrawer: {
       styleOverrides: {
         paper: {
+          "& .MuiListItemIcon-root": {
+  color: "rgba(255,255,255,0.88)",
+},
+"& .MuiSvgIcon-root": {
+  fill: "currentColor",
+},
           background: "linear-gradient(135deg, #0f172a, #111827)",
-          color: "#e5e7eb",
           borderRight: "1px solid rgba(255,255,255,0.08)",
+
+          // ITEM BASE
+          "& .RaMenuItemLink-root": {
+            borderRadius: 12,
+            margin: "4px 10px",
+            paddingTop: 10,
+            paddingBottom: 10,
+            color: "rgba(255,255,255,0.90)",
+            transition: "all 120ms ease",
+          },
+
+          // TEXTO NORMAL
+          "& .RaMenuItemLink-root .MuiListItemText-primary": {
+            color: "rgba(255,255,255,0.90)",
+            fontWeight: 650,
+          },
+
+          // ICONO NORMAL
+          "& .RaMenuItemLink-root .MuiListItemIcon-root": {
+            color: "rgba(255,255,255,0.85)",
+            minWidth: 40,
+          },
+
+          // HOVER
+          "& .RaMenuItemLink-root:hover": {
+            backgroundColor: "rgba(96,165,250,0.14)",
+          },
+
+          // ACTIVO
+          "& .RaMenuItemLink-active": {
+            backgroundColor: "rgba(96,165,250,0.22)",
+            boxShadow: "inset 3px 0 0 rgba(96,165,250,0.95)",
+          },
+
+          // ACTIVO TEXTO
+          "& .RaMenuItemLink-active .MuiListItemText-primary": {
+            color: "#ffffff",
+            fontWeight: 750,
+          },
+
+          // ACTIVO ICONO
+          "& .RaMenuItemLink-active .MuiListItemIcon-root": {
+            color: "#ffffff",
+          },
         },
       },
     },
-    MuiListItemIcon: {
-      styleOverrides: {
-        root: { color: "rgba(255,255,255,0.75)" },
-      },
-    },
-    MuiListItemText: {
-      styleOverrides: {
-        primary: { color: "rgba(255,255,255,0.9)" },
-      },
-    },
+
+    // 🔵 CARDS / PAPER (para dashboard)
     MuiPaper: {
       styleOverrides: {
-        root: { boxShadow: "0 4px 20px rgba(0,0,0,0.08)" },
+        root: {
+          boxShadow: "0 8px 30px rgba(15,23,42,0.08)",
+          border: "1px solid rgba(15,23,42,0.06)",
+        },
       },
     },
   },
