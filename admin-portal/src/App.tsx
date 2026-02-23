@@ -15,6 +15,7 @@ import { EmployeesEdit, EmployeesList, EmployeesShow } from "./resources/employe
 import { ServiceGate } from "./app/ServiceGate";
 import { ServiceSuspendedPage } from "./pages/ServiceSuspendedPage";
 import MyCompanyPage from "./pages/MyCompanyPage";
+import LoginPage from "./pages/LoginPage";
 
 
 function CollectableList() {
@@ -44,6 +45,7 @@ export default function App() {
       authProvider={authProvider}
       layout={MyLayout}
       dashboard={DashboardScreen}
+      loginPage={LoginPage}
     >
       <CustomRoutes noLayout>
           <Route path="/service-suspended" element={<ServiceSuspendedPage />} />
